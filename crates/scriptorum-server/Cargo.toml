@@ -1,0 +1,21 @@
+[package]
+name = "scriptorum-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+axum = "0.7"
+clap = { version = "4", features = ["derive"] }
+scriptorum-core = { path = "../scriptorum-core" }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.5", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+scriptorum-core = { path = "../scriptorum-core", features = ["client"] }
+tempfile = "3"

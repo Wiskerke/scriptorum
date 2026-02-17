@@ -1,10 +1,22 @@
 # Scriptorum
 
-A custom sync system for Supernote e-ink tablets. Replaces the built-in Supernote private cloud with a lightweight setup: an Android app that syncs `/Note` files over WireGuard to a Rust server you control.
+Scriptorum provides a basic workflow to synchronize between a Supernote e-ink table and a personal server.
 
-## Why
+It supports syncing of all the notes in the `/Note` over WireGuard to a server you control. (Or at least once we get a little bit farther in the project.)
 
-The Supernote private cloud is resource-heavy, has no CLI access to notes, and requires their infrastructure. Scriptorum gives you full control: your notes sync to your own server over an encrypted WireGuard tunnel.
+## Why?
+
+This project basically fulfills a personal desire.
+
+- I want a personal cloud solution for my supernote device, without depending on external parties.
+- I want to have the possibility to add custom processing on the server after receiving notes. Something that takes the notes, translates them to markdown, and then adds them to my personal documentation structure. Or maybe I can hook in an AI account and perform requests to it via a note, and receive an answer back via notes. Not sure yet, but it is something I would like to try and experiment with.
+- I tried the supernote private cloud, but it was not the thing I wanted. It was using a lot of resources, multiple dockers, databases, and features like requiring an email smtp server. I think it is great that supernote provides this option, but it was not what I was looking for.
+
+Some other aspects:
+
+- I like using WireGuard to protect the communication between client and server, which seems like a good way to ensure my device is the only one that can connect with the server. Maybe I'll look into using https with a client certificate at some point. 
+- It would have been nice if I could have integrated with the nice sync button in the supernote UI, but I didn't really want to start reverse engineering the private cloud. That just seemed a bit like too much effort and trouble. And starting a side-loaded app is pretty userfriendly as well, once you've moved it up in the list. 
+
 
 ## How it works
 
@@ -56,12 +68,12 @@ just test
 ### Emulator testing
 
 ```sh
-just avd-create              # create Android Virtual Device (once)
-just emulator                # launch emulator (in a separate terminal)
-just emulator-install-wireguard  # sideload WireGuard into emulator
-just emulator-seed-notes     # push test notes to /sdcard/Note
-just emulator-install        # build and install the app
-just server                  # run server (in a separate terminal)
+just avd-create                  # create Android Virtual Device (once)
+just emulator                    # launch emulator (run this in a separate shell or in the background)
+just emulator-install-wireguard  # push WireGuard.apk to the emulator
+just emulator-seed-notes         # push test notes to /sdcard/Note
+just emulator-install            # build and install the app
+just server                      # run server (in a separate terminal)
 ```
 
 The emulator reaches the host at `10.0.2.2:3742`.
@@ -82,13 +94,4 @@ Configure a WireGuard tunnel on the Supernote pointing to your server. The app's
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `just test` | Run all Rust tests (unit + integration + e2e) |
-| `just check` | Clippy lint + format check |
-| `just server` | Start the sync server |
-| `just apk` | Build the Android APK |
-| `just build-android-lib` | Cross-compile Rust JNI library for arm64 |
-| `just emulator` | Launch the Android emulator |
-| `just emulator-install` | Build everything and install on emulator |
-| `just emulator-seed-notes` | Push testfiles/ to emulator's /sdcard/Note |
+Please run `just -l` to check the commands and what they do

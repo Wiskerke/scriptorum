@@ -1,7 +1,5 @@
 package com.scriptorum.app
 
-import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -20,8 +18,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scrollLog: ScrollView
 
     // TODO: make these configurable
-    private val serverUrl = "http://10.0.2.2:3742"  // host from emulator; change for real device
-    private val tunnelName = "scriptorum"
+    private val serverUrl = "https://10.0.2.2"  // Caddy mTLS on default 443
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,7 +53,12 @@ class MainActivity : AppCompatActivity() {
         tvLog.text = ""
         log("=== Sync started ===")
 
-        val syncService = SyncService(serverUrl, tunnelName)
+        val syncService = SyncService(
+            serverUrl = serverUrl,
+            caCertPem = assets.open("certs/ca.pem").bufferedReader().readText(),
+            clientCertPem = assets.open("certs/client.pem").bufferedReader().readText(),
+            clientKeyPem = assets.open("certs/client-key.pem").bufferedReader().readText(),
+        )
 
         Thread {
             syncService.execute(this) { message ->

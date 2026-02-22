@@ -1,0 +1,22 @@
+{
+	# We provide our own certs (self-signed CA), so disable Caddy's automatic HTTPS/ACME
+	auto_https off
+	servers {
+		# Required when auto_https is off; without this Caddy refuses to serve TLS on :443
+		strict_sni_host insecure_off
+	}
+}
+
+:443 {
+	# Use our self-signed server cert and require clients to present a cert signed by our CA (mTLS)
+	tls certs/server.pem certs/server-key.pem {
+		client_auth {
+			mode require_and_verify
+			trust_pool file {
+				pem_file certs/ca.pem
+			}
+		}
+	}
+
+	reverse_proxy 127.0.0.1:3742
+}

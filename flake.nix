@@ -49,6 +49,8 @@
             jdk17
             just
             ripgrep
+            caddy
+            openssl
           ];
 
           ANDROID_HOME = "${androidSdk}/share/android-sdk";

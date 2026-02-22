@@ -44,16 +44,15 @@ impl Storage {
     /// Rejects paths that escape the root via `..`.
     fn resolve(&self, rel_path: &str) -> Result<PathBuf> {
         let full = self.root.join(rel_path);
-        let canonical_root = self.root.canonicalize().with_context(|| {
-            format!("canonicalizing root {}", self.root.display())
-        })?;
+        let canonical_root = self
+            .root
+            .canonicalize()
+            .with_context(|| format!("canonicalizing root {}", self.root.display()))?;
         // For new files that don't exist yet, we check the parent
         let check_path = if full.exists() {
             full.canonicalize()?
         } else {
-            let parent = full
-                .parent()
-                .context("no parent")?;
+            let parent = full.parent().context("no parent")?;
             fs::create_dir_all(parent)?;
             let canon_parent = parent.canonicalize()?;
             canon_parent.join(full.file_name().context("no filename")?)
@@ -88,9 +87,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let storage = Storage::new(dir.path().to_path_buf()).unwrap();
 
-        storage
-            .write_file("sub/deep/file.txt", b"deep")
-            .unwrap();
+        storage.write_file("sub/deep/file.txt", b"deep").unwrap();
         assert_eq!(storage.read_file("sub/deep/file.txt").unwrap(), b"deep");
     }
 

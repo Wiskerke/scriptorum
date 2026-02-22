@@ -66,7 +66,10 @@ pub async fn put_file(
     let storage = storage.lock().await;
     storage.write_file(&path, &body)?;
 
-    Ok((StatusCode::OK, Json(serde_json::json!({"sha256": actual_sha256}))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({"sha256": actual_sha256})),
+    ))
 }
 
 // Error handling

@@ -1,13 +1,14 @@
 # Scriptorum
 
-Supernote note sync system: Android app syncs `/Note` files over WireGuard to a Rust server.
+Supernote note sync system: Android app syncs `/Note` files over mTLS to a Rust server.
 
 ## Architecture
 
-- **scriptorum-core**: shared Rust library (checksums, scanning, sync protocol types, diff logic, HTTP sync client)
+- **scriptorum-core**: shared Rust library (checksums, scanning, sync protocol types, diff logic, HTTP sync client with mTLS)
 - **scriptorum-server**: Axum HTTP server storing files and computing sync diffs
 - **scriptorum-android**: JNI bridge (cdylib) exposing core to Kotlin
-- **android/**: Kotlin shell app (WiFi panel, WireGuard intents, UI)
+- **android/**: Kotlin shell app (WiFi panel, cert extraction, UI)
+- **Caddy**: reverse proxy handling TLS termination and client cert verification
 
 ## Build
 
@@ -21,15 +22,24 @@ just build-android-lib     # cross-compile JNI lib for arm64
 just apk                   # build the Android APK
 ```
 
+## Certificate setup
+
+```
+just gen-certs             # generate CA, server, and client certs in ./certs
+just install-certs         # copy client certs to Android assets for APK bundling
+```
+
 ## Emulator workflow
 
 ```
 just avd-create            # create AVD (once)
 just emulator              # launch emulator (separate terminal)
-just emulator-install-wireguard  # sideload WireGuard APK
+just gen-certs             # generate certs (once)
+just install-certs         # bundle client certs into APK assets (once, or after cert rotation)
 just emulator-seed-notes   # push testfiles/ to /sdcard/Note
 just emulator-install      # build + install Scriptorum APK
-just server                # run server (separate terminal, reachable at 10.0.2.2:3742)
+just server                # run server (separate terminal)
+just caddy                 # run Caddy mTLS proxy (separate terminal)
 ```
 
 ## NixOS notes
@@ -53,4 +63,4 @@ Conflict resolution: last-write-wins by mtime.
 - Paths in FileEntry are relative to the note root (e.g. "Daily/2026-02-17.note")
 - SHA256 as lowercase hex strings
 - Unix timestamps in seconds for modified times
-- The `client` feature flag on scriptorum-core enables the HTTP sync client (pulls in ureq)
+- The `client` feature flag on scriptorum-core enables the HTTP sync client (pulls in ureq, rustls, rustls-pemfile)

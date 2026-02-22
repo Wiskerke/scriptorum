@@ -17,10 +17,7 @@ pub fn build_app(storage_dir: &Path) -> anyhow::Result<Router> {
     Ok(Router::new()
         .route("/api/v1/health", get(api::health))
         .route("/api/v1/sync/diff", post(api::sync_diff))
-        .route(
-            "/api/v1/files/*path",
-            get(api::get_file).put(api::put_file),
-        )
+        .route("/api/v1/files/*path", get(api::get_file).put(api::put_file))
         .with_state(state))
 }
 

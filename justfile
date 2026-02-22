@@ -39,6 +39,54 @@ emulator-seed-notes:
     adb shell mkdir -p /sdcard/Note
     adb push testfiles/. /sdcard/Note/
 
-# Copy the wireguard android app to the emulator
-emulator-install-wireguard:
-    adb install -r ~/experiments/wireguard-server/com.wireguard.android-1.0.20260102.apk
+# Generate mTLS certificates (CA, server, client)
+gen-certs:
+    ./scripts/gen-certs.sh
+
+# Copy client certs to Android assets for APK bundling
+install-certs:
+    mkdir -p android/app/src/main/assets/certs
+    cp certs/ca.pem certs/client.pem certs/client-key.pem android/app/src/main/assets/certs/
+
+# Run Caddy as mTLS reverse proxy in front of the server
+caddy:
+    sudo sysctl -q net.ipv4.ip_unprivileged_port_start=443
+    caddy run --config Caddyfile
+
+# Start server and caddy in background (logs in logs/)
+start-server:
+    mkdir -p logs
+    cargo build -p scriptorum-server
+    sudo sysctl -q net.ipv4.ip_unprivileged_port_start=443
+    ./target/debug/scriptorum-server > logs/server.log 2>&1 & echo $! > logs/server.pid
+    caddy run --config Caddyfile > logs/caddy.log 2>&1 & echo $! > logs/caddy.pid
+    @echo "Server PID: $(cat logs/server.pid), Caddy PID: $(cat logs/caddy.pid)"
+    @echo "Logs: logs/server.log, logs/caddy.log"
+
+# Stop background server and caddy
+stop-server:
+    -kill $(cat logs/server.pid 2>/dev/null) 2>/dev/null; rm -f logs/server.pid
+    -kill $(cat logs/caddy.pid 2>/dev/null) 2>/dev/null; rm -f logs/caddy.pid
+    @echo "Server and Caddy stopped."
+
+# Restart server and caddy
+restart-server:
+    just stop-server
+    just start-server
+
+# Start emulator in background (logs in logs/)
+start-emulator:
+    mkdir -p logs
+    DISPLAY="${DISPLAY:-:0}" XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" emulator -avd scriptorum -gpu swiftshader_indirect > logs/emulator.log 2>&1 & echo $! > logs/emulator.pid
+    @echo "Emulator PID: $(cat logs/emulator.pid)"
+    @echo "Logs: logs/emulator.log"
+
+# Stop background emulator
+stop-emulator:
+    -kill $(cat logs/emulator.pid 2>/dev/null) 2>/dev/null; rm -f logs/emulator.pid
+    @echo "Emulator stopped."
+
+# Restart emulator
+restart-emulator:
+    just stop-emulator
+    just start-emulator

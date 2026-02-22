@@ -14,10 +14,17 @@ object NativeBridge {
     external fun scanAndHash(notePath: String): String
 
     /**
-     * Perform a full sync against the server.
+     * Perform a full sync against the server using mTLS.
      * Returns a JSON summary string with "uploaded" and "downloaded" counts.
      */
-    external fun performSync(serverUrl: String, notePath: String, callback: ProgressCallback): String
+    external fun performSync(
+        serverUrl: String,
+        notePath: String,
+        caCertPem: String,
+        clientCertPem: String,
+        clientKeyPem: String,
+        callback: ProgressCallback,
+    ): String
 
     interface ProgressCallback {
         fun onProgress(message: String)

@@ -30,8 +30,8 @@ pub fn scan_directory(root: &Path) -> Result<Manifest> {
             .as_secs();
         let size = metadata.len();
 
-        let sha256 = sha256_file(abs_path)
-            .with_context(|| format!("hashing {}", abs_path.display()))?;
+        let sha256 =
+            sha256_file(abs_path).with_context(|| format!("hashing {}", abs_path.display()))?;
 
         // Use forward slashes for cross-platform consistency
         let path_str = rel_path

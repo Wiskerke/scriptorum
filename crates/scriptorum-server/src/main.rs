@@ -18,9 +18,10 @@ struct Cli {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("scriptorum_server=info,tower_http=info")
-        }))
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("scriptorum_server=info,tower_http=info")),
+        )
         .init();
 
     let cli = Cli::parse();

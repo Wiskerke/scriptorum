@@ -28,7 +28,7 @@ async fn upload_files_to_empty_server() {
     let result = tokio::task::spawn_blocking({
         let url = url.clone();
         let path = client_dir.path().to_path_buf();
-        move || perform_sync(&url, &path, |msg| eprintln!("  {msg}"))
+        move || perform_sync(&url, &path, None, |msg| eprintln!("  {msg}"))
     })
     .await
     .unwrap()
@@ -57,17 +57,13 @@ async fn download_files_from_server() {
     // Pre-populate server storage
     fs::write(server_dir.path().join("from_server.txt"), "server data").unwrap();
     fs::create_dir_all(server_dir.path().join("deep")).unwrap();
-    fs::write(
-        server_dir.path().join("deep/nested.txt"),
-        "nested data",
-    )
-    .unwrap();
+    fs::write(server_dir.path().join("deep/nested.txt"), "nested data").unwrap();
 
     // Sync: server -> client
     let result = tokio::task::spawn_blocking({
         let url = url.clone();
         let path = client_dir.path().to_path_buf();
-        move || perform_sync(&url, &path, |msg| eprintln!("  {msg}"))
+        move || perform_sync(&url, &path, None, |msg| eprintln!("  {msg}"))
     })
     .await
     .unwrap()
@@ -99,7 +95,7 @@ async fn bidirectional_sync() {
     let result = tokio::task::spawn_blocking({
         let url = url.clone();
         let path = client_dir.path().to_path_buf();
-        move || perform_sync(&url, &path, |msg| eprintln!("  {msg}"))
+        move || perform_sync(&url, &path, None, |msg| eprintln!("  {msg}"))
     })
     .await
     .unwrap()
@@ -132,7 +128,7 @@ async fn no_changes_on_second_sync() {
     let result = tokio::task::spawn_blocking({
         let url = url.clone();
         let path = client_dir.path().to_path_buf();
-        move || perform_sync(&url, &path, |_| {})
+        move || perform_sync(&url, &path, None, |_| {})
     })
     .await
     .unwrap()
@@ -143,7 +139,7 @@ async fn no_changes_on_second_sync() {
     let result = tokio::task::spawn_blocking({
         let url = url.clone();
         let path = client_dir.path().to_path_buf();
-        move || perform_sync(&url, &path, |_| {})
+        move || perform_sync(&url, &path, None, |_| {})
     })
     .await
     .unwrap()
@@ -164,7 +160,7 @@ async fn sync_after_client_modifies_file() {
     let result = tokio::task::spawn_blocking({
         let url = url.clone();
         let path = client_dir.path().to_path_buf();
-        move || perform_sync(&url, &path, |_| {})
+        move || perform_sync(&url, &path, None, |_| {})
     })
     .await
     .unwrap()
@@ -179,7 +175,7 @@ async fn sync_after_client_modifies_file() {
     let result = tokio::task::spawn_blocking({
         let url = url.clone();
         let path = client_dir.path().to_path_buf();
-        move || perform_sync(&url, &path, |msg| eprintln!("  {msg}"))
+        move || perform_sync(&url, &path, None, |msg| eprintln!("  {msg}"))
     })
     .await
     .unwrap()

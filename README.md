@@ -1,8 +1,8 @@
 # Scriptorum
 
-Scriptorum provides a basic workflow to synchronize between a Supernote e-ink table and a personal server.
-
-It is a work-in-progress, and I cannot recommend it for usage by anyone. I am not even yet using it.
+A personal sync system for the [Supernote](https://supernote.com/) e-ink tablet.
+An Android app running on the Supernote syncs `.note` files over mutual TLS to a
+self-hosted Rust server.
 
 ## Why?
 
@@ -23,14 +23,13 @@ Some other aspects:
 ## How it works
 
 ```
-Supernote                                Your Server
-(Android app)                            (Rust/Axum)
-    |                                        |
-    |-- POST /api/v1/sync/diff ------------->|  send local file manifest
-    |<------------- SyncDiff (JSON) ---------|  server says what to upload/download
-    |                                        |
-    |-- PUT /api/v1/files/{path} ----------->|  upload new/changed files
-    |<- GET /api/v1/files/{path} ------------|  download new/changed files
+Supernote (Android app)          Your Server (Rust/Axum)
+        |                                  |
+        |-- POST /api/v1/sync/diff ------->|  send local file manifest
+        |<------- SyncDiff (JSON) ---------|  server says what to upload/download
+        |                                  |
+        |-- PUT  /api/v1/files/{path} ---->|  upload new/changed files
+        |<-- GET /api/v1/files/{path} -----|  download new/changed files
 ```
 
 Conflict resolution is last-write-wins by modification time.
@@ -45,21 +44,136 @@ Future plans:
 
 | Component | Description |
 |-----------|-------------|
-| `crates/scriptorum-core` | Shared library: checksums, file scanning, sync protocol types, diff logic, HTTP client |
+| `crates/scriptorum-core` | Shared library: checksums, scanning, sync protocol types, diff logic, HTTP client |
 | `crates/scriptorum-server` | Axum HTTP server with file storage and manifest tracking |
 | `crates/scriptorum-android` | JNI bridge exposing the Rust core to Kotlin |
 | `android/` | Kotlin app: sync button, log view, WiFi control |
 
-The Kotlin shell handles Android system APIs (WiFi panel, UI). All sync logic runs in Rust via JNI.
+The Kotlin shell handles Android system APIs. All sync logic runs in Rust via JNI.
 
-## Setup
+---
+
+## Self-hosting quickstart
+
+### 1. Add the NixOS module
+
+In your `flake.nix`:
+
+```nix
+inputs.scriptorum.url = "github:YOUR_USERNAME/scriptorum";
+```
+
+In your NixOS configuration:
+
+```nix
+{ inputs, ... }: {
+  imports = [ inputs.scriptorum.nixosModules.default ];
+
+  services.scriptorum = {
+    enable = true;
+    storageDir = "/var/lib/scriptorum/notes";
+    bindAddress = "127.0.0.1:3742";
+    # openFirewall = false;  # keep false if Caddy is in front
+  };
+}
+```
+
+### 2. Generate certificates
+
+```bash
+SERVER_HOSTNAME=your.server.example.com just gen-certs
+```
+
+This creates `certs/ca.pem`, `certs/server.pem`, `certs/client.pem`, and their keys.
+
+### 3. Configure Caddy for mTLS
+
+Caddy handles TLS termination and client cert verification.
+Add to your Caddyfile (adjust paths to your generated certs):
+
+```
+your.server.example.com {
+    tls /path/to/certs/server.pem /path/to/certs/server-key.pem
+
+    @mtls {
+        tls client_auth {
+            mode require_and_verify
+            trusted_ca_certs_pem_file /path/to/certs/ca.pem
+        }
+    }
+
+    handle @mtls {
+        reverse_proxy 127.0.0.1:3742
+    }
+
+    handle {
+        respond "Unauthorized" 401
+    }
+}
+```
+
+### 4. Personalise the APK
+
+Download the latest release APK, then inject your certs and server URL:
+
+```bash
+just inject-certs -- \
+  --ca certs/ca.pem \
+  --cert certs/client.pem \
+  --key certs/client-key.pem \
+  --url https://your.server.example.com \
+  scriptorum-release.apk \
+  scriptorum-personal.apk
+```
+
+Sideload `scriptorum-personal.apk` onto your Supernote.
+
+---
+
+## Development setup
 
 ### Prerequisites
 
 - [Nix](https://nixos.org/) with flakes enabled
 - [direnv](https://direnv.net/) (optional, for automatic shell activation)
 
-### Getting started
+```bash
+direnv allow        # or: nix develop
+```
 
-I would recommend not to use this project in the current state. 
-But if you are insterested, `direnv allow` and reading through the `justfile` are probably a good starting point.
+### Emulator workflow
+
+```bash
+just avd-create            # create AVD (once)
+just emulator              # launch emulator (separate terminal)
+just gen-certs             # generate certs (once)
+just install-certs         # bundle certs into APK assets
+just emulator-seed-notes   # push testfiles/ to /sdcard/Note
+just emulator-install      # build + install Scriptorum APK
+just server                # run server (separate terminal)
+just caddy                 # run Caddy mTLS proxy (separate terminal)
+```
+
+### Building from source
+
+```bash
+just test                  # run all Rust tests (unit + e2e)
+just check                 # clippy + fmt check
+just server                # run the server on 0.0.0.0:3742
+just build-android-lib     # cross-compile JNI lib for arm64
+just apk                   # build the Android APK
+```
+
+**Note:** The repo ships placeholder certs in `android/app/src/main/assets/certs/`
+so `just apk` works out of the box.  They are non-functional for real servers.
+Replace them with `just gen-certs && just install-certs`.
+
+### NixOS notes
+
+- AGP downloads a dynamically linked `aapt2` that won't run on NixOS. `just apk`
+  passes `-Pandroid.aapt2FromMavenOverride` to use the Nix-provided one.
+- `ANDROID_NDK_ROOT` points to `ndk/26.1.10909125` (not `ndk-bundle`).
+
+## License
+
+BSD 3-Clause — see [LICENSE](LICENSE).

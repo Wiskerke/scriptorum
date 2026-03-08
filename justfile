@@ -40,13 +40,24 @@ emulator-seed-notes:
     adb push testfiles/. /sdcard/Note/
 
 # Generate mTLS certificates (CA, server, client)
+# Optional: SERVER_HOSTNAME=your.server.example.com just gen-certs
 gen-certs:
     ./scripts/gen-certs.sh
 
-# Copy client certs to Android assets for APK bundling
+# Copy client certs to Android assets for APK bundling (overwrites placeholder certs)
 install-certs:
     mkdir -p android/app/src/main/assets/certs
     cp certs/ca.pem certs/client.pem certs/client-key.pem android/app/src/main/assets/certs/
+
+# Generate placeholder (non-functional) certs and commit them to the assets directory
+# Only needed when bootstrapping the repo. Real users run gen-certs + install-certs.
+gen-placeholder-certs:
+    ./scripts/gen-placeholder-certs.sh
+
+# Inject real certs (and optionally server URL) into a distributed APK and re-sign it
+# Usage: just inject-certs -- --ca ca.pem --cert client.pem --key client-key.pem --url https://your.server input.apk output.apk
+inject-certs *ARGS:
+    ./scripts/inject-certs.sh {{ARGS}}
 
 # Run Caddy as mTLS reverse proxy in front of the server
 caddy:

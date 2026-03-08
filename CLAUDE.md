@@ -26,8 +26,15 @@ just apk                   # build the Android APK
 
 ```
 just gen-certs             # generate CA, server, and client certs in ./certs
+                           # Optional: SERVER_HOSTNAME=your.host just gen-certs
 just install-certs         # copy client certs to Android assets for APK bundling
+just gen-placeholder-certs # regenerate non-functional placeholder certs in assets/
 ```
+
+**Placeholder certs**: `android/app/src/main/assets/certs/` contains non-functional
+placeholder PEMs committed to the repo so `just apk` works without setup.
+They will not authenticate against any real server. Replace with real certs by running
+`just gen-certs && just install-certs`.
 
 ## Emulator workflow
 
@@ -42,8 +49,22 @@ just server                # run server (separate terminal)
 just caddy                 # run Caddy mTLS proxy (separate terminal)
 ```
 
-## NixOS notes
+## APK personalisation (for distributed builds)
 
+```
+just inject-certs -- \
+  --ca certs/ca.pem --cert certs/client.pem --key certs/client-key.pem \
+  --url https://your.server \
+  input.apk output.apk
+```
+
+This removes the placeholder certs/config from an APK, injects real ones, re-aligns,
+and re-signs. Requires `zip`, `zipalign`, `apksigner` (all in the Nix dev shell).
+
+## NixOS
+
+- The flake exposes `packages.scriptorum-server` (Rust binary) and
+  `nixosModules.default` (systemd service with `services.scriptorum.*` options).
 - AGP downloads a dynamically linked aapt2 that won't run on NixOS. The `just apk` command passes `-Pandroid.aapt2FromMavenOverride` to use the Nix-provided aapt2 from build-tools.
 - The `ANDROID_NDK_ROOT` points to `ndk/26.1.10909125` (not `ndk-bundle`).
 

@@ -19,4 +19,5 @@ ureq = { version = "2", features = ["json"], optional = true }
 walkdir = "2"
 
 [dev-dependencies]
+rcgen = "0.13"
 tempfile = "3"

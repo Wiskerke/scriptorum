@@ -24,7 +24,7 @@
         in
         {
           options.services.scriptorum = {
-            enable = mkEnableOption "Scriptorum note sync server";
+            enable = mkEnableOption "Scriptorum server";
 
             storageDir = mkOption {
               default = "/var/lib/scriptorum/notes";
@@ -61,7 +61,7 @@
             users.users.${cfg.user} = {
               isSystemUser = true;
               group = cfg.group;
-              description = "Scriptorum sync server";
+              description = "Scriptorum server";
             };
             users.groups.${cfg.group} = { };
 
@@ -70,7 +70,7 @@
             ];
 
             systemd.services.scriptorum = {
-              description = "Scriptorum note sync server";
+              description = "Scriptorum server";
               wantedBy = [ "multi-user.target" ];
               after = [ "network.target" ];
 
@@ -145,9 +145,6 @@
             ripgrep
             caddy
             openssl
-            # For inject-certs.sh
-            zip
-            unzip
           ];
 
           ANDROID_HOME = "${androidSdk}/share/android-sdk";

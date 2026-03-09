@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
-# Usage: gen-certs.sh [output-dir]
-# Optional env vars:
-#   SERVER_HOSTNAME — extra DNS name or IP added to the server cert SAN
-#                     (e.g. SERVER_HOSTNAME=your.server.example.com)
+# Usage: gen-certs.sh [--hostname <name>] [--out <dir>]
+#   --hostname  optional DNS name or IP added to the server cert SAN
+#   --out       output directory (default: ./certs)
 set -euo pipefail
 
-OUT="${1:-./certs}"
+HOSTNAME_ARG=""
+OUT="./certs"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --hostname) HOSTNAME_ARG="$2"; shift 2 ;;
+    --out)      OUT="$2";          shift 2 ;;
+    *) echo "Unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
 mkdir -p "$OUT"
 
 DAYS=3650
 
 # Build the SAN extension for the server cert.
-# Always include localhost + emulator host; add SERVER_HOSTNAME if provided.
+# Always include localhost + emulator host; add hostname if provided.
 SAN="DNS:localhost,IP:127.0.0.1,IP:10.0.2.2"
-if [[ -n "${SERVER_HOSTNAME:-}" ]]; then
+if [[ -n "$HOSTNAME_ARG" ]]; then
   # Detect whether it looks like an IP address or a DNS name
-  if [[ "$SERVER_HOSTNAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    SAN="$SAN,IP:$SERVER_HOSTNAME"
+  if [[ "$HOSTNAME_ARG" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    SAN="$SAN,IP:$HOSTNAME_ARG"
   else
-    SAN="$SAN,DNS:$SERVER_HOSTNAME"
+    SAN="$SAN,DNS:$HOSTNAME_ARG"
   fi
   echo "Server SAN: $SAN"
 fi

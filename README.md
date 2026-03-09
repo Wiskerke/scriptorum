@@ -6,37 +6,22 @@ self-hosted Rust server.
 
 ## Why?
 
-Mostly to to scratch an itch and make the supernote more useful for me.
+I wanted a personal minimal cloud solution for my supernote usage. It was also a possibility to experiment using AI for development, and to experiment with slightly different workflows.
+I also want something that integrates well with [SilverBullet](https://silverbullet.md/). I imagine SilverBullet as the basic UI to view notes on the server.
 
-Some things I would like to have:
+Some alternatives:
 
-- A personal cloud solution for my supernote device, without depending on public cloud servers.
-- The possibility to add custom processing on the server after receiving notes. Something that takes the notes, translates them to markdown, and then adds them to my personal documentation structure. Or maybe hook in some AI and perform requests to it via a note, and receive an answer back as a note. Not sure where to go there, but it sounds like fun.
-- I tried the supernote private cloud, but it was not for me. It was using a lot of resources, multiple dockers, databases, and features like requiring an email smtp server. Things you need when you want to support multiple users. I think it is great that ratta provides this option, but it did not spark joy for me.
-
-Some other aspects:
-
-- I currently am planning to use a mTLS configuration with a personal CA certificate, and require the client to identify itself via the HTTPS channel. This seems like a good compromise of secure communication, while being fairly standard.
-- It would have been nice if I could have integrated with the nice sync button in the supernote UI, but I didn't want to start reverse engineering the private cloud interfaces. That just seemed a bit too much efforts and trouble. And starting a side-loaded app is pretty userfriendly, and allows me a bit more custom options if needed.
-
+- [Supernote private cloud](https://support.supernote.com/setting-up-your-own-supernote-private-cloud-beta) is a bit too big with multiple dockers and databases, and requiring an email server.
+- I was already invested in my own solution, when I found out about [supernote knowledge hub](https://allenporter.github.io/supernote/supernote.html). It does seem interesting to me.
 
 ## How it works
 
-```
-Supernote (Android app)          Your Server (Rust/Axum)
-        |                                  |
-        |-- POST /api/v1/sync/diff ------->|  send local file manifest
-        |<------- SyncDiff (JSON) ---------|  server says what to upload/download
-        |                                  |
-        |-- PUT  /api/v1/files/{path} ---->|  upload new/changed files
-        |<-- GET /api/v1/files/{path} -----|  download new/changed files
-```
+The basic idea is that there is a side-loaded android app on the Supernote which will communicate with the server. It will upload all notebooks that are not on the server, and download files that are only on the server.
 
-Conflict resolution is last-write-wins by modification time.
+The communication uses mTLS (via HTTPS): The app identifies itself to the server via a client certificate. The server only listens to clients that have a valid certificate. The client only communicates if the server has a valid certificate. 
+Caddy is used as reverse proxy to handle HTTPS and certificate validation. Which is a well regarded application, which should make this safe enough to expose as a personal server to the internet.
 
-Future plans:
- - With AI integration, the structure will change. I expect something like this: A) The client will request a sync diff, and only receives the list of files to upload. B) The client provides all changed files. C) The client tells the server to process them. The processing might result in commands to the AI which could result in changes in the notes or new notes. The processing can result in info messages and a final list of files to download. D) The client downloads all the files. 
- - I would want a mechanism to backup all files on the server which have been received from the client. The risk of conflicts seems minimal, but it would be good to have an option to recover older notes. 
+The certificates on the Supernote are stored on the device filesystem (`/sdcard/Scriptorum/`) and read by the app at sync time. The APK itself is generic — you push your own certs to the device via `adb`.
 
 ## Architecture
 
@@ -51,8 +36,6 @@ Future plans:
 
 The Kotlin shell handles Android system APIs. All sync logic runs in Rust via JNI.
 
----
-
 ## Self-hosting quickstart
 
 ### 1. Add the NixOS module
@@ -60,7 +43,7 @@ The Kotlin shell handles Android system APIs. All sync logic runs in Rust via JN
 In your `flake.nix`:
 
 ```nix
-inputs.scriptorum.url = "github:YOUR_USERNAME/scriptorum";
+inputs.scriptorum.url = "github:Wiskerke/scriptorum";
 ```
 
 In your NixOS configuration:
@@ -81,7 +64,7 @@ In your NixOS configuration:
 ### 2. Generate certificates
 
 ```bash
-SERVER_HOSTNAME=your.server.example.com just gen-certs
+just gen-certs your.server.example.com
 ```
 
 This creates `certs/ca.pem`, `certs/server.pem`, `certs/client.pem`, and their keys.
@@ -112,23 +95,25 @@ your.server.example.com {
 }
 ```
 
-### 4. Personalise the APK
+### 4. Push certs to your device
 
-Download the latest release APK, then inject your certs and server URL:
+Sideload the APK onto your Supernote, then push your certs and server URL:
 
 ```bash
-just inject-certs -- \
-  --ca certs/ca.pem \
-  --cert certs/client.pem \
-  --key certs/client-key.pem \
-  --url https://your.server.example.com \
-  scriptorum-release.apk \
-  scriptorum-personal.apk
+just install-device-certs https://your.server.example.com
 ```
 
-Sideload `scriptorum-personal.apk` onto your Supernote.
+Or manually:
 
----
+```bash
+adb shell mkdir -p /sdcard/Scriptorum
+adb push certs/ca.pem /sdcard/Scriptorum/ca.pem
+adb push certs/client.pem /sdcard/Scriptorum/client.pem
+adb push certs/client-key.pem /sdcard/Scriptorum/client-key.pem
+echo '{"server_url": "https://your.server.example.com"}' | adb shell 'cat > /sdcard/Scriptorum/config.json'
+```
+
+The app reads certs from `/sdcard/Scriptorum/` at sync time and shows setup instructions if they are missing.
 
 ## Development setup
 
@@ -144,14 +129,14 @@ direnv allow        # or: nix develop
 ### Emulator workflow
 
 ```bash
-just avd-create            # create AVD (once)
-just emulator              # launch emulator (separate terminal)
-just gen-certs             # generate certs (once)
-just install-certs         # bundle certs into APK assets
-just emulator-seed-notes   # push testfiles/ to /sdcard/Note
-just emulator-install      # build + install Scriptorum APK
-just server                # run server (separate terminal)
-just caddy                 # run Caddy mTLS proxy (separate terminal)
+just avd-create                                    # create AVD (once)
+just emulator                                      # launch emulator (separate terminal)
+just gen-certs                                     # generate certs (once)
+just emulator-install                              # build + install Scriptorum APK
+just install-device-certs https://10.0.2.2         # push certs to emulator
+just emulator-seed-notes                           # push testfiles/ to /sdcard/Note
+just server                                        # run server (separate terminal)
+just caddy                                         # run Caddy mTLS proxy (separate terminal)
 ```
 
 ### Building from source
@@ -164,16 +149,8 @@ just build-android-lib     # cross-compile JNI lib for arm64
 just apk                   # build the Android APK
 ```
 
-**Note:** The repo ships placeholder certs in `android/app/src/main/assets/certs/`
-so `just apk` works out of the box.  They are non-functional for real servers.
-Replace them with `just gen-certs && just install-certs`.
-
 ### NixOS notes
 
 - AGP downloads a dynamically linked `aapt2` that won't run on NixOS. `just apk`
   passes `-Pandroid.aapt2FromMavenOverride` to use the Nix-provided one.
 - `ANDROID_NDK_ROOT` points to `ndk/26.1.10909125` (not `ndk-bundle`).
-
-## License
-
-BSD 3-Clause — see [LICENSE](LICENSE).

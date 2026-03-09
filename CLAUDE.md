@@ -1,6 +1,6 @@
 # Scriptorum
 
-Supernote note sync system: Android app syncs `/Note` files over mTLS to a Rust server.
+Supernote sync system for notes: Android app syncs `/Note` files over mTLS to a Rust server.
 
 ## Architecture
 
@@ -25,41 +25,26 @@ just apk                   # build the Android APK
 ## Certificate setup
 
 ```
-just gen-certs             # generate CA, server, and client certs in ./certs
-                           # Optional: SERVER_HOSTNAME=your.host just gen-certs
-just install-certs         # copy client certs to Android assets for APK bundling
-just gen-placeholder-certs # regenerate non-functional placeholder certs in assets/
+just gen-certs                                   # generate CA, server, and client certs in ./certs
+just gen-certs your.host                         # also add hostname/IP to server cert SAN
+                                                 # script: gen-certs.sh --hostname <name> --out <dir>
+just install-device-certs https://your.server    # push certs + config to connected device/emulator
 ```
 
-**Placeholder certs**: `android/app/src/main/assets/certs/` contains non-functional
-placeholder PEMs committed to the repo so `just apk` works without setup.
-They will not authenticate against any real server. Replace with real certs by running
-`just gen-certs && just install-certs`.
+Certs are stored on the device at `/sdcard/Scriptorum/` and read at sync time.
 
 ## Emulator workflow
 
 ```
-just avd-create            # create AVD (once)
-just emulator              # launch emulator (separate terminal)
-just gen-certs             # generate certs (once)
-just install-certs         # bundle client certs into APK assets (once, or after cert rotation)
-just emulator-seed-notes   # push testfiles/ to /sdcard/Note
-just emulator-install      # build + install Scriptorum APK
-just server                # run server (separate terminal)
-just caddy                 # run Caddy mTLS proxy (separate terminal)
+just avd-create                                  # create AVD (once)
+just emulator                                    # launch emulator (separate terminal)
+just gen-certs                                   # generate certs (once)
+just emulator-install                            # build + install Scriptorum APK
+just install-device-certs https://10.0.2.2       # push certs to emulator
+just emulator-seed-notes                         # push testfiles/ to /sdcard/Note
+just server                                      # run server (separate terminal)
+just caddy                                       # run Caddy mTLS proxy (separate terminal)
 ```
-
-## APK personalisation (for distributed builds)
-
-```
-just inject-certs -- \
-  --ca certs/ca.pem --cert certs/client.pem --key certs/client-key.pem \
-  --url https://your.server \
-  input.apk output.apk
-```
-
-This removes the placeholder certs/config from an APK, injects real ones, re-aligns,
-and re-signs. Requires `zip`, `zipalign`, `apksigner` (all in the Nix dev shell).
 
 ## NixOS
 
@@ -67,6 +52,7 @@ and re-signs. Requires `zip`, `zipalign`, `apksigner` (all in the Nix dev shell)
   `nixosModules.default` (systemd service with `services.scriptorum.*` options).
 - AGP downloads a dynamically linked aapt2 that won't run on NixOS. The `just apk` command passes `-Pandroid.aapt2FromMavenOverride` to use the Nix-provided aapt2 from build-tools.
 - The `ANDROID_NDK_ROOT` points to `ndk/26.1.10909125` (not `ndk-bundle`).
+- No assets are committed to the repo; `android/app/src/main/assets/` is gitignored.
 
 ## Sync Protocol
 

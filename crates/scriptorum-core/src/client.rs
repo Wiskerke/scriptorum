@@ -142,3 +142,130 @@ where
         messages,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Generate a self-signed CA and a client cert signed by it, returning a TlsConfig.
+    fn make_test_tls_config() -> TlsConfig {
+        use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
+
+        let ca_key = KeyPair::generate().unwrap();
+        let mut ca_params = CertificateParams::default();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+
+        let client_key = KeyPair::generate().unwrap();
+        let client_params = CertificateParams::default();
+        let client_cert = client_params.signed_by(&client_key, &ca_cert, &ca_key).unwrap();
+
+        TlsConfig {
+            ca_cert_pem: ca_cert.pem(),
+            client_cert_pem: client_cert.pem(),
+            client_key_pem: client_key.serialize_pem(),
+        }
+    }
+
+    /// Bind on port 0 to get a free port, drop the listener so the port is closed.
+    fn unused_port() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    // --- build_tls_config ---
+
+    #[test]
+    fn build_tls_config_empty_pem_errors() {
+        let tls = TlsConfig {
+            ca_cert_pem: String::new(),
+            client_cert_pem: String::new(),
+            client_key_pem: String::new(),
+        };
+        let err = build_tls_config(&tls).unwrap_err();
+        assert!(
+            err.to_string().contains("no private key found"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn build_tls_config_valid_certs_succeeds() {
+        let tls = make_test_tls_config();
+        assert!(build_tls_config(&tls).is_ok());
+    }
+
+    // --- perform_sync error paths ---
+
+    #[test]
+    fn perform_sync_nonexistent_dir_errors() {
+        let result = perform_sync(
+            "http://127.0.0.1:1",
+            std::path::Path::new("/nonexistent/path/that/does/not/exist"),
+            None,
+            |_| {},
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn perform_sync_connection_refused_errors() {
+        let dir = TempDir::new().unwrap();
+        let port = unused_port();
+        let result = perform_sync(
+            &format!("http://127.0.0.1:{port}"),
+            dir.path(),
+            None,
+            |_| {},
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("POST /sync/diff failed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn perform_sync_bad_tls_config_errors_before_connecting() {
+        let dir = TempDir::new().unwrap();
+        let tls = TlsConfig {
+            ca_cert_pem: String::new(),
+            client_cert_pem: String::new(),
+            client_key_pem: String::new(),
+        };
+        let result = perform_sync("http://127.0.0.1:1", dir.path(), Some(&tls), |_| {});
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("no private key found"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn perform_sync_progress_callback_receives_scan_messages() {
+        let dir = TempDir::new().unwrap();
+        let port = unused_port();
+        let mut messages = Vec::new();
+        let _ = perform_sync(
+            &format!("http://127.0.0.1:{port}"),
+            dir.path(),
+            None,
+            |msg| messages.push(msg.to_string()),
+        );
+        assert!(messages.iter().any(|m| m.contains("Scanning")));
+        assert!(messages.iter().any(|m| m.contains("local files")));
+    }
+
+    #[test]
+    fn sync_result_is_debug() {
+        let r = SyncResult {
+            uploaded: 3,
+            downloaded: 1,
+            messages: vec!["done".to_string()],
+        };
+        let s = format!("{r:?}");
+        assert!(s.contains("uploaded"));
+        assert!(s.contains("downloaded"));
+    }
+}

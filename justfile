@@ -9,13 +9,14 @@ build-android-lib:
 # Run the unit tests and the integration tests
 test:
     cargo test --workspace
+    cargo test -p scriptorum-core --features client
 
 # Lint and format the rust code
 check:
     cargo clippy --workspace -- -D warnings && cargo fmt --check
 
 # Build the android app (resulting in an apk file)
-apk:
+apk: build-android-lib
     cd android && ./gradlew assembleRelease -Pandroid.aapt2FromMavenOverride="$ANDROID_HOME/build-tools/34.0.0/aapt2"
 
 # Create the android emulation environment (run this once)
@@ -27,11 +28,11 @@ emulator:
     emulator -avd scriptorum -gpu swiftshader_indirect
 
 # Install the android app on the emulator
-emulator-install: build-android-lib apk
+emulator-install: apk
     adb install -r android/app/build/outputs/apk/release/app-release.apk
 
 # Install the android app on a real device (Supernote)
-device-install: build-android-lib apk
+device-install: apk
     adb install -r android/app/build/outputs/apk/release/app-release.apk
 
 # Copy some test notes to the emulator
@@ -40,24 +41,18 @@ emulator-seed-notes:
     adb push testfiles/. /sdcard/Note/
 
 # Generate mTLS certificates (CA, server, client)
-# Optional: SERVER_HOSTNAME=your.server.example.com just gen-certs
-gen-certs:
-    ./scripts/gen-certs.sh
+# Optional: just gen-certs your.server.example.com
+gen-certs hostname="":
+    ./scripts/gen-certs.sh {{ if hostname != "" { "--hostname " + hostname } else { "" } }}
 
-# Copy client certs to Android assets for APK bundling (overwrites placeholder certs)
-install-certs:
-    mkdir -p android/app/src/main/assets/certs
-    cp certs/ca.pem certs/client.pem certs/client-key.pem android/app/src/main/assets/certs/
-
-# Generate placeholder (non-functional) certs and commit them to the assets directory
-# Only needed when bootstrapping the repo. Real users run gen-certs + install-certs.
-gen-placeholder-certs:
-    ./scripts/gen-placeholder-certs.sh
-
-# Inject real certs (and optionally server URL) into a distributed APK and re-sign it
-# Usage: just inject-certs -- --ca ca.pem --cert client.pem --key client-key.pem --url https://your.server input.apk output.apk
-inject-certs *ARGS:
-    ./scripts/inject-certs.sh {{ARGS}}
+# Push certs and server config to the connected device or emulator
+# Usage: just install-device-certs https://your.server.example.com
+install-device-certs URL:
+    adb shell mkdir -p /sdcard/Scriptorum
+    adb push certs/ca.pem /sdcard/Scriptorum/ca.pem
+    adb push certs/client.pem /sdcard/Scriptorum/client.pem
+    adb push certs/client-key.pem /sdcard/Scriptorum/client-key.pem
+    echo '{"server_url": "{{URL}}"}' | adb shell 'cat > /sdcard/Scriptorum/config.json'
 
 # Run Caddy as mTLS reverse proxy in front of the server
 caddy:

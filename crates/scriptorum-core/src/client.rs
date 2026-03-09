@@ -29,10 +29,9 @@ fn build_tls_config(tls: &TlsConfig) -> Result<rustls::ClientConfig> {
     }
 
     // Load client cert chain
-    let client_certs: Vec<_> =
-        rustls_pemfile::certs(&mut Cursor::new(&tls.client_cert_pem))
-            .collect::<std::result::Result<_, _>>()
-            .context("parsing client certificates")?;
+    let client_certs: Vec<_> = rustls_pemfile::certs(&mut Cursor::new(&tls.client_cert_pem))
+        .collect::<std::result::Result<_, _>>()
+        .context("parsing client certificates")?;
 
     // Load client private key
     let client_key: PrivateKeyDer =
@@ -159,7 +158,9 @@ mod tests {
 
         let client_key = KeyPair::generate().unwrap();
         let client_params = CertificateParams::default();
-        let client_cert = client_params.signed_by(&client_key, &ca_cert, &ca_key).unwrap();
+        let client_cert = client_params
+            .signed_by(&client_key, &ca_cert, &ca_key)
+            .unwrap();
 
         TlsConfig {
             ca_cert_pem: ca_cert.pem(),

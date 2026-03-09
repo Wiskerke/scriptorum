@@ -18,7 +18,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - uses: actions/cache@v4
+        id: android-sdk-cache
+        with:
+          path: |
+            /usr/local/lib/android/sdk/build-tools/34.0.0
+            /usr/local/lib/android/sdk/platforms/android-34
+            /usr/local/lib/android/sdk/ndk/26.1.10909125
+          key: android-sdk-bt34.0.0-p34-ndk26.1.10909125
+
       - name: Install Android SDK components
+        if: steps.android-sdk-cache.outputs.cache-hit != 'true'
         run: $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "build-tools;34.0.0" "platforms;android-34" "ndk;26.1.10909125"
 
       - uses: actions/cache@v4

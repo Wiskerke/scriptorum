@@ -17,40 +17,50 @@ Requires Nix with flakes. Enter the dev shell with `direnv allow` or `nix develo
 ```
 just test                  # run all Rust tests (unit + e2e)
 just check                 # clippy + fmt check
-just server                # run the server on 0.0.0.0:3742
-just build-android-lib     # cross-compile JNI lib for arm64
-just apk                   # build the Android APK
+just build-apk             # build the Android APK
+just device-install        # build + install APK on a real device
+just testserver-start      # start test server + Caddy in background
 ```
 
 ## Certificate setup
 
+Emulator certs are managed from the main justfile:
+
 ```
-just gen-certs                                   # generate CA, server, and client certs in ./certs
-just gen-certs your.host                         # also add hostname/IP to server cert SAN
-                                                 # script: gen-certs.sh --hostname <name> --out <dir>
-just install-device-certs https://your.server    # push certs + config to connected device/emulator
+just emulator-gen-certs                          # generate CA + server + client into ./emulator-certs/
 ```
+
+For production or custom deployments, use the standalone tools in `certificates/`:
+
+```
+cd certificates
+just gen-ca                                      # generate CA only (run once)
+just gen-server-cert example.com api.example.com # server cert with one or more SANs
+just gen-client-cert                             # client cert: client.pem + client.p12
+just gen-client-cert --name johan               # client cert with custom CN (johan.pem + johan.p12)
+```
+
+- Server cert always includes `localhost` / `127.0.0.1` in SAN; extra hostnames/IPs are added as arguments.
+- Client cert is exported as both PEM and a PKCS#12 (`.p12`) bundle for browser/OS import (no password).
+- Scripts: `certificates/gen-ca.sh`, `certificates/gen-server-cert.sh`, `certificates/gen-client-cert.sh`
 
 Certs are stored on the device at `/sdcard/Scriptorum/` and read at sync time.
 
 ## Emulator workflow
 
 ```
-just avd-create                                  # create AVD (once)
-just emulator                                    # launch emulator (separate terminal)
-just gen-certs                                   # generate certs (once)
-just emulator-install                            # build + install Scriptorum APK
-just install-device-certs https://10.0.2.2       # push certs to emulator
-just emulator-seed-notes                         # push testfiles/ to /sdcard/Note
-just server                                      # run server (separate terminal)
-just caddy                                       # run Caddy mTLS proxy (separate terminal)
+just emulator-create                             # create AVD (once)
+just emulator-start                              # launch emulator (separate terminal)
+just emulator-gen-certs                          # generate certs (once)
+just emulator-install                            # build + install APK, push certs, seed notes
+just testserver-start                            # run server + Caddy mTLS proxy (separate terminal)
 ```
 
 ## NixOS
 
 - The flake exposes `packages.scriptorum-server` (Rust binary) and
   `nixosModules.default` (systemd service with `services.scriptorum.*` options).
-- AGP downloads a dynamically linked aapt2 that won't run on NixOS. The `just apk` command passes `-Pandroid.aapt2FromMavenOverride` to use the Nix-provided aapt2 from build-tools.
+- AGP downloads a dynamically linked aapt2 that won't run on NixOS. The `just build-apk` command passes `-Pandroid.aapt2FromMavenOverride` to use the Nix-provided aapt2 from build-tools.
 - The `ANDROID_NDK_ROOT` points to `ndk/26.1.10909125` (not `ndk-bundle`).
 - No assets are committed to the repo; `android/app/src/main/assets/` is gitignored.
 

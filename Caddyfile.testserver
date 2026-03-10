@@ -9,11 +9,11 @@
 
 :443 {
 	# Use our self-signed server cert and require clients to present a cert signed by our CA (mTLS)
-	tls certs/server.pem certs/server-key.pem {
+	tls emulator-certs/server.pem emulator-certs/server-key.pem {
 		client_auth {
 			mode require_and_verify
 			trust_pool file {
-				pem_file certs/ca.pem
+				pem_file emulator-certs/ca.pem
 			}
 		}
 	}

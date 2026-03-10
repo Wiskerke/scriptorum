@@ -7,7 +7,8 @@ android/build
 android/app/build
 android/app/src/main/jniLibs
 android/local.properties
-storage
-certs/
+emulator-certs/
+certificates/certs/
+testserver-files/
 .claude
 logs/

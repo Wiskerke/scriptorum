@@ -1,0 +1,14 @@
+default:
+    just --list
+
+# Generate the CA certificate. Flags: --name <cn>, --out <dir>
+gen-ca *args:
+    ./gen-ca.sh {{args}}
+
+# Generate the server certificate. Args: [--name <cn>] [--out <dir>] [--ca-dir <dir>] [hostname-or-ip ...]
+gen-server-cert *args:
+    ./gen-server-cert.sh {{args}}
+
+# Generate a client certificate. Flags: --name <cn>, --out <dir>, --ca-dir <dir>
+gen-client-cert *args:
+    ./gen-client-cert.sh {{args}}

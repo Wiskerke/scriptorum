@@ -63,11 +63,27 @@ In your NixOS configuration:
 
 ### 2. Generate certificates
 
-```bash
-just gen-certs your.server.example.com
-```
+The `certificates/` folder contains scripts to generate the CA and certificates needed for mTLS. 
 
-This creates `certs/ca.pem`, `certs/server.pem`, `certs/client.pem`, and their keys.
+Tip: You can copy the `certificates` folder to your home folder or somewhere else outside the repo. That way it is easier to keep track of the certificates you create and to add more in the future. The examples below assume you are working from inside the repo's `certificates/` folder; adjust the path if you copied it elsewhere.
+
+All scripts require `openssl` and output to `./certs/` by default (`--out` overrides this). Scripts that sign a certificate read the CA from `./certs/` by default (`--ca-dir` overrides this).
+
+**`gen-ca`** — generates the CA certificate (`ca.pem`, `ca-key.pem`) used to sign all other certificates. Run once. `--name` sets the CN only; the output filenames are always `ca.pem` and `ca-key.pem`.
+
+**`gen-server-cert`** — generates a server certificate (`<name>.pem`, `<name>-key.pem`) signed by the CA. `--name` sets both the CN and the output filename prefix (default: `server`). Add the hostname or IP that clients will use to connect to the server as argument(s).
+
+**`gen-client-cert`** — generates a client certificate (`<name>.pem`, `<name>-key.pem`, `<name>.p12`) signed by the CA. `--name` sets both the CN and the output filename prefix (default: `client`). The `.p12` bundle is for importing into a browser or OS certificate store; the Supernote only needs the `.pem` files.
+
+Use a distinct `--name` for each certificate so browsers and OS certificate stores can tell them apart.
+
+```bash
+cd certificates
+just gen-ca --name my_ca
+just gen-server-cert --name my_server your.server.example.com
+just gen-client-cert --name my_nomad
+just gen-client-cert --name my_laptop
+```
 
 ### 3. Configure Caddy for mTLS
 
@@ -95,21 +111,23 @@ your.server.example.com {
 }
 ```
 
-### 4. Push certs to your device
+### 4. Install the app
 
-Sideload the APK onto your Supernote, then push your certs and server URL:
+Build the APK and install it on your Supernote via adb:
 
 ```bash
-just install-device-certs https://your.server.example.com
+just device-install
 ```
 
-Or manually:
+### 5. Push certs to your device
+
+Push your certs and server URL via adb. Adjust the local paths to match wherever your `certs/` folder lives. The app expects the files to be named exactly `ca.pem`, `client.pem`, and `client-key.pem` on the device, regardless of what `--name` you used when generating them:
 
 ```bash
 adb shell mkdir -p /sdcard/Scriptorum
-adb push certs/ca.pem /sdcard/Scriptorum/ca.pem
-adb push certs/client.pem /sdcard/Scriptorum/client.pem
-adb push certs/client-key.pem /sdcard/Scriptorum/client-key.pem
+adb push /path/to/certs/ca.pem /sdcard/Scriptorum/ca.pem
+adb push /path/to/certs/my_nomad.pem /sdcard/Scriptorum/client.pem
+adb push /path/to/certs/my_nomad-key.pem /sdcard/Scriptorum/client-key.pem
 echo '{"server_url": "https://your.server.example.com"}' | adb shell 'cat > /sdcard/Scriptorum/config.json'
 ```
 
@@ -129,14 +147,11 @@ direnv allow        # or: nix develop
 ### Emulator workflow
 
 ```bash
-just avd-create                                    # create AVD (once)
-just emulator                                      # launch emulator (separate terminal)
-just gen-certs                                     # generate certs (once)
-just emulator-install                              # build + install Scriptorum APK
-just install-device-certs https://10.0.2.2         # push certs to emulator
-just emulator-seed-notes                           # push testfiles/ to /sdcard/Note
-just server                                        # run server (separate terminal)
-just caddy                                         # run Caddy mTLS proxy (separate terminal)
+just emulator-create                               # create AVD (once)
+just emulator-start                                # launch emulator (separate terminal)
+just emulator-gen-certs                            # generate certs (once)
+just emulator-install                              # build + install APK, push certs, seed notes
+just testserver-start                              # run server + Caddy mTLS proxy (separate terminal)
 ```
 
 ### Building from source
@@ -144,13 +159,12 @@ just caddy                                         # run Caddy mTLS proxy (separ
 ```bash
 just test                  # run all Rust tests (unit + e2e)
 just check                 # clippy + fmt check
-just server                # run the server on 0.0.0.0:3742
-just build-android-lib     # cross-compile JNI lib for arm64
-just apk                   # build the Android APK
+just build-apk             # build the Android APK
+just device-install        # build + install APK on a real device
 ```
 
 ### NixOS notes
 
-- AGP downloads a dynamically linked `aapt2` that won't run on NixOS. `just apk`
+- AGP downloads a dynamically linked `aapt2` that won't run on NixOS. `just build-apk`
   passes `-Pandroid.aapt2FromMavenOverride` to use the Nix-provided one.
 - `ANDROID_NDK_ROOT` points to `ndk/26.1.10909125` (not `ndk-bundle`).

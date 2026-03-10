@@ -150,10 +150,18 @@ If you have a real device connected, disconnect it first — adb treats it as a 
 
 ```bash
 just emulator-create     # create AVD (once)
-just emulator-start      # launch emulator (separate terminal)
 just emulator-gen-certs  # generate certs (once)
+just emulator-start      # launch emulator
 just emulator-install    # build + install APK, push certs, seed notes
-just testserver-start    # run server + Caddy mTLS proxy (separate terminal)
+just testserver-start    # run server + Caddy mTLS proxy
+```
+
+Logs can be found in the `logs` folder. The server will use the `./testserver-files` folder as the local storage.
+
+When finished:
+```bash
+just testserver-stop    # stop caddy and the server
+just emulator-stop      # stop the emulator
 ```
 
 ### Building from source

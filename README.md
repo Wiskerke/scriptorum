@@ -113,7 +113,7 @@ your.server.example.com {
 
 ### 4. Install the app
 
-Build the APK and install it on your Supernote via adb:
+Build the APK and install it on your Supernote via adb. If you have the emulator running, stop it first — adb treats it as a connected device and may install there instead.
 
 ```bash
 just device-install
@@ -146,21 +146,23 @@ direnv allow        # or: nix develop
 
 ### Emulator workflow
 
+If you have a real device connected, disconnect it first — adb treats it as a connected device and `emulator-install` may install there instead.
+
 ```bash
-just emulator-create                               # create AVD (once)
-just emulator-start                                # launch emulator (separate terminal)
-just emulator-gen-certs                            # generate certs (once)
-just emulator-install                              # build + install APK, push certs, seed notes
-just testserver-start                              # run server + Caddy mTLS proxy (separate terminal)
+just emulator-create     # create AVD (once)
+just emulator-start      # launch emulator (separate terminal)
+just emulator-gen-certs  # generate certs (once)
+just emulator-install    # build + install APK, push certs, seed notes
+just testserver-start    # run server + Caddy mTLS proxy (separate terminal)
 ```
 
 ### Building from source
 
 ```bash
-just test                  # run all Rust tests (unit + e2e)
-just check                 # clippy + fmt check
-just build-apk             # build the Android APK
-just device-install        # build + install APK on a real device
+just test            # run all Rust tests (unit + e2e)
+just check           # clippy + fmt check
+just build-apk       # build the Android APK
+just device-install  # build + install APK on a real device
 ```
 
 ### NixOS notes

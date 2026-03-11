@@ -2,8 +2,10 @@ pub mod api;
 pub mod storage;
 
 use api::AppState;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
+use tower_http::trace::TraceLayer;
 use std::path::Path;
 use std::sync::Arc;
 use storage::Storage;
@@ -18,6 +20,9 @@ pub fn build_app(storage_dir: &Path) -> anyhow::Result<Router> {
         .route("/api/v1/health", get(api::health))
         .route("/api/v1/sync/diff", post(api::sync_diff))
         .route("/api/v1/files/*path", get(api::get_file).put(api::put_file))
+        // Axum's default body limit is 2MB; disable it so large .note files can be uploaded
+        .layer(DefaultBodyLimit::disable())
+        .layer(TraceLayer::new_for_http())
         .with_state(state))
 }
 

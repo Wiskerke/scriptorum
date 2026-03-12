@@ -5,11 +5,11 @@ use api::AppState;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
-use tower_http::trace::TraceLayer;
 use std::path::Path;
 use std::sync::Arc;
 use storage::Storage;
 use tokio::sync::Mutex;
+use tower_http::trace::TraceLayer;
 
 /// Build the Axum router with the given storage directory.
 pub fn build_app(storage_dir: &Path) -> anyhow::Result<Router> {

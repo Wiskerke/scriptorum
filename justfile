@@ -18,6 +18,18 @@ test:
 check:
     cargo clippy --workspace -- -D warnings && cargo fmt --check
 
+# Generate Android icon PNGs from android/icon.svg and android/icon-round.svg
+build-icons:
+    #!/usr/bin/env bash
+    set -e
+    RES="android/app/src/main/res"
+    for entry in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
+        size=${entry% *}; density=${entry#* }
+        rsvg-convert -w $size -h $size android/icon.svg       -o "$RES/mipmap-$density/ic_launcher.png"
+        rsvg-convert -w $size -h $size android/icon-round.svg -o "$RES/mipmap-$density/ic_launcher_round.png"
+    done
+    rsvg-convert -w 432 -h 432 android/icon.svg -o "$RES/drawable/ic_launcher_foreground.png"
+
 # Build the android app (resulting in an apk file)
 build-apk: build-android-lib
     cd android && ./gradlew assembleRelease -Pandroid.aapt2FromMavenOverride="$ANDROID_HOME/build-tools/34.0.0/aapt2"

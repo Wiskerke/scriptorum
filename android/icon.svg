@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="13 60 73 73">
+  <!-- White background -->
+  <rect x="13" y="60" width="73" height="73" fill="#ffffff"/>
+
+  <!-- Outer silhouette: single thick line (replaces the two original outlines) -->
+  <path
+     style="fill:none;stroke:#000000;stroke-width:4.5;stroke-dasharray:none;stroke-opacity:1;stroke-linecap:round;stroke-linejoin:round"
+     d="M 29.838963,119.0 V 97.377235 c 1.045742,-17.767707 14.401734,-21.59386 20.509877,-23.597611 5.636091,2.61748 17.559823,6.947018 18.813317,23.259933 0.48934,6.368253 -0.257091,21.961 -0.257091,21.961" />
+  <path
+     style="fill:#dedede;stroke:#000000;stroke-width:1.842;stroke-dasharray:none;stroke-opacity:1;fill-opacity:1"
+     d="m 39.346154,119.56154 h 11.423077 l -10.407692,-19.03846 -7.869231,-0.5077 -0.237613,5.06934 z" />
+  <path
+     style="fill:#bdbdbd;stroke:#000000;stroke-width:1.842;stroke-dasharray:none;stroke-opacity:1;fill-opacity:1"
+     d="M 50.76923,119.56153 60.923076,112.2 50.007693,92.653846 40.361539,100.26923 Z" />
+  <path
+     style="fill:#7f7f7f;fill-opacity:1;stroke:#000000;stroke-width:1.842;stroke-dasharray:none;stroke-opacity:1"
+     d="m 42.646153,113.46922 c 0,0 1e-6,-4.31539 2.284615,-7.61538 2.284616,-3.29999 3.3,-2.53846 5.076924,-0.76154 1.776923,1.77692 1.776922,1.01539 -1.269231,4.06154 -3.046156,3.04615 -6.092308,4.31538 -6.092308,4.31538 z" />
+  <path
+     style="fill:#7f7f7f;fill-opacity:1;stroke:#000000;stroke-width:1.842;stroke-dasharray:none;stroke-opacity:1"
+     d="M 49.246152,103.06154 61.684614,90.115383 62.699998,93.923075 51.023075,104.83846 Z" />
+  <!-- Baseline: doubled stroke-width -->
+  <path
+     style="fill:#7f7f7f;fill-opacity:1;stroke:#000000;stroke-width:4.421;stroke-dasharray:none;stroke-opacity:1;stroke-linecap:round"
+     d="m 27.415384,120.06923 44.423078,-0.50769" />
+</svg>

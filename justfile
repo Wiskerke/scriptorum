@@ -1,6 +1,10 @@
 default:
     just --list
 
+# Install git hooks (run once after cloning)
+install-hooks:
+    git config core.hooksPath .githooks
+
 [private]
 build-android-lib:
     cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs build -p scriptorum-android --release

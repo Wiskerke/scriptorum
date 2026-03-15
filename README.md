@@ -29,10 +29,9 @@ The synchronize has special behavior to handle:
 
  - Note is renamed on client or on server -> Use the new name
  - Note is deleted on server -> Delete on Supernote, unless the file has changed on the Supernote since the last sync
- - Note is deleted on client -> Will download from server
+ - Note is deleted on client -> On the server, move the file to the archive folder
  - If there is a conflict where a file is changed on both sides, then the losing file will be moved to the server's `archive/conflicts/` folder, to ensure it can be recovered if needed.
- - If a file is deleted on the client, the server moves its copy to the archive root rather than deleting it.
- - Files placed in `Note/archive/` on the Supernote are uploaded to the server archive and removed locally (upload-only outbox). The folder will be created on a synchronize if it dit not exist.
+ - Files placed in `Note/archive/` on the Supernote are uploaded to the server archive and removed locally (upload-only outbox). The folder will be created on a synchronize if it did not exist.
 
 More details can be found in [synchronize.md](./docs/synchronize.md).
 

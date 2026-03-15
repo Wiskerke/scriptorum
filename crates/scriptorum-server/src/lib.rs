@@ -3,7 +3,7 @@ pub mod storage;
 
 use api::AppState;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::Router;
 use std::path::Path;
 use std::sync::Arc;
@@ -11,15 +11,16 @@ use storage::Storage;
 use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
 
-/// Build the Axum router with the given storage directory.
-pub fn build_app(storage_dir: &Path) -> anyhow::Result<Router> {
-    let storage = Storage::new(storage_dir.to_path_buf())?;
+/// Build the Axum router with the given storage and conflicted directories.
+pub fn build_app(storage_dir: &Path, conflicted_dir: &Path) -> anyhow::Result<Router> {
+    let storage = Storage::new(storage_dir.to_path_buf(), conflicted_dir.to_path_buf())?;
     let state: AppState = Arc::new(Mutex::new(storage));
 
     Ok(Router::new()
         .route("/api/v1/health", get(api::health))
         .route("/api/v1/sync/diff", post(api::sync_diff))
         .route("/api/v1/files/*path", get(api::get_file).put(api::put_file))
+        .route("/api/v1/conflicted/*path", put(api::put_conflicted))
         // Axum's default body limit is 2MB; disable it so large .note files can be uploaded
         .layer(DefaultBodyLimit::disable())
         .layer(TraceLayer::new_for_http())
@@ -36,7 +37,8 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_app(dir: &std::path::Path) -> Router {
-        build_app(dir).unwrap()
+        let conflicted = dir.join("conflicted");
+        build_app(dir, &conflicted).unwrap()
     }
 
     #[tokio::test]

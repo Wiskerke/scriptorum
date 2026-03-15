@@ -52,6 +52,9 @@ fn build_tls_config(tls: &TlsConfig) -> Result<rustls::ClientConfig> {
 pub struct SyncResult {
     pub uploaded: usize,
     pub downloaded: usize,
+    pub deleted: usize,
+    pub renamed: usize,
+    pub conflicts: usize,
     pub messages: Vec<String>,
 }
 
@@ -99,10 +102,84 @@ where
         .context("parsing SyncDiff response")?;
 
     report(&format!(
-        "To upload: {}, to download: {}",
+        "To upload: {}, to download: {}, to delete: {}, to rename: {}",
         diff.to_upload.len(),
-        diff.to_download.len()
+        diff.to_download.len(),
+        diff.to_delete.len(),
+        diff.to_rename.len(),
     ));
+
+    // Upload client's conflicted files to the server's conflicted folder
+    let mut conflicts = 0;
+    for conflict in &diff.client_conflicts {
+        conflicts += 1;
+        if conflict.already_present {
+            report(&format!(
+                "Conflict: {} (client version already saved as {})",
+                conflict.original_path, conflict.conflicted_path
+            ));
+        } else {
+            report(&format!(
+                "Conflict: saving {} as {}",
+                conflict.original_path, conflict.conflicted_path
+            ));
+            let file_path = note_dir.join(&conflict.original_path);
+            let data = std::fs::read(&file_path)
+                .with_context(|| format!("reading {} for conflict upload", file_path.display()))?;
+            let sha = sha256_bytes(&data);
+            agent
+                .put(&format!(
+                    "{server_url}/api/v1/conflicted/{}",
+                    conflict.conflicted_path
+                ))
+                .set("X-SHA256", &sha)
+                .set("Content-Type", "application/octet-stream")
+                .send_bytes(&data)
+                .with_context(|| format!("uploading conflict {}", conflict.conflicted_path))?;
+        }
+    }
+    for conflict in &diff.server_conflicts {
+        conflicts += 1;
+        report(&format!(
+            "Conflict: server version of {} moved to {}",
+            conflict.original_path, conflict.conflicted_path
+        ));
+    }
+
+    // Apply deletes first
+    for path in &diff.to_delete {
+        report(&format!("Deleting {path}"));
+        let file_path = note_dir.join(path);
+        if file_path.exists() {
+            std::fs::remove_file(&file_path).with_context(|| format!("deleting {path}"))?;
+            // Remove empty parent directories
+            let mut parent = file_path.parent();
+            while let Some(dir) = parent {
+                if dir == note_dir {
+                    break;
+                }
+                if std::fs::read_dir(dir)
+                    .map(|mut d| d.next().is_none())
+                    .unwrap_or(false)
+                {
+                    let _ = std::fs::remove_dir(dir);
+                }
+                parent = dir.parent();
+            }
+        }
+    }
+
+    // Apply renames
+    for rename in &diff.to_rename {
+        report(&format!("Renaming {} -> {}", rename.from, rename.to));
+        let src = note_dir.join(&rename.from);
+        let dst = note_dir.join(&rename.to);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&src, &dst)
+            .with_context(|| format!("renaming {} -> {}", rename.from, rename.to))?;
+    }
 
     for entry in &diff.to_upload {
         report(&format!("Uploading {}", entry.path));
@@ -138,6 +215,9 @@ where
     Ok(SyncResult {
         uploaded: diff.to_upload.len(),
         downloaded: diff.to_download.len(),
+        deleted: diff.to_delete.len(),
+        renamed: diff.to_rename.len(),
+        conflicts,
         messages,
     })
 }
@@ -263,6 +343,9 @@ mod tests {
         let r = SyncResult {
             uploaded: 3,
             downloaded: 1,
+            deleted: 0,
+            renamed: 0,
+            conflicts: 0,
             messages: vec!["done".to_string()],
         };
         let s = format!("{r:?}");

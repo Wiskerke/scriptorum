@@ -23,6 +23,17 @@ Caddy is used as reverse proxy to handle HTTPS and certificate validation. Which
 
 The certificates on the Supernote are stored on the device filesystem (`/sdcard/Scriptorum/`) and read by the app at sync time. The APK itself is generic — you push your own certs to the device via `adb`.
 
+### Special synchronize cases
+
+The synchronize has special behavior to handle:
+
+ - Note is renamed on client or on server -> Use the new name
+ - Note is deleted on server -> Delete on Supernote, unless the file has changed on the Supernote since the last sync
+ - Note is deleted on client -> Will download from server
+ - If there is a conflict where a file is changed on both sides, then the losing file will be moved to a 'conflicted' folder on the server, to ensure it can be recovered if needed.
+
+More details can be found in [synchronize.md](./docs/synchronize.md).
+
 ## Architecture
 
 **Monorepo** with a Rust workspace and an Android Gradle project:
@@ -55,6 +66,7 @@ In your NixOS configuration:
   services.scriptorum = {
     enable = true;
     storageDir = "/var/lib/scriptorum/notes";
+    conflictedDir = "/var/lib/scriptorum/conflicted-notes";
     bindAddress = "127.0.0.1:3742";
     # openFirewall = false;  # keep false if Caddy is in front
   };
@@ -156,7 +168,7 @@ just emulator-install    # build + install APK, push certs, seed notes
 just testserver-start    # run server + Caddy mTLS proxy
 ```
 
-Logs can be found in the `logs` folder. The server will use the `./testserver-files` folder as the local storage.
+Logs can be found in the `logs` folder. The server will use `./testserver-files` for notes and `./testserver-conflicted` for conflict-displaced files.
 
 When finished:
 ```bash

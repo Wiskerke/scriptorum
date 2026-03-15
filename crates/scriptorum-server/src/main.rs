@@ -13,6 +13,10 @@ struct Cli {
     /// Path to file storage directory
     #[arg(short, long, default_value = "./storage")]
     storage: PathBuf,
+
+    /// Path to conflicted files directory
+    #[arg(long, default_value = "./conflicted")]
+    conflicted_dir: PathBuf,
 }
 
 #[tokio::main]
@@ -26,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    let app = scriptorum_server::build_app(&cli.storage)?;
+    let app = scriptorum_server::build_app(&cli.storage, &cli.conflicted_dir)?;
 
     let listener = tokio::net::TcpListener::bind(cli.bind).await?;
     tracing::info!("listening on {}", cli.bind);

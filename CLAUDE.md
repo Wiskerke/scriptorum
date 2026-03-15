@@ -67,13 +67,14 @@ just testserver-start                            # run server + Caddy mTLS proxy
 ## Sync Protocol
 
 ```
-POST /api/v1/sync/diff    — client sends Manifest, server returns SyncDiff
-PUT  /api/v1/files/{path} — upload file (X-SHA256 header)
-GET  /api/v1/files/{path} — download file
-GET  /api/v1/health       — health check
+POST /api/v1/sync/diff         — client sends Manifest, server returns SyncDiff
+PUT  /api/v1/files/{path}      — upload file (X-SHA256 header)
+GET  /api/v1/files/{path}      — download file
+PUT  /api/v1/conflicted/{path} — upload a displaced file to the conflicted folder (no ledger update)
+GET  /api/v1/health            — health check
 ```
 
-Conflict resolution: last-write-wins by mtime.
+Conflict resolution: last-write-wins by mtime, but both versions are preserved. The losing version is moved to the server's conflicted folder (`--conflicted-dir`, default `./conflicted`). `SyncDiff` includes `server_conflicts` (server moves its version during `apply_diff_to_ledger`) and `client_conflicts` (client uploads its version to `PUT /api/v1/conflicted/{path}`).
 
 ## Conventions
 

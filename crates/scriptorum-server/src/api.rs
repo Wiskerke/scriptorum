@@ -20,9 +20,17 @@ pub async fn sync_diff(
     State(storage): State<AppState>,
     Json(client_manifest): Json<Manifest>,
 ) -> Result<Json<SyncDiff>, AppError> {
-    let storage = storage.lock().await;
+    let mut storage = storage.lock().await;
     let server_manifest = storage.manifest()?;
-    let diff = compute_diff(&client_manifest, &server_manifest);
+    let conflicted_manifest = storage.conflicted_manifest()?;
+    let ledger = storage.ledger_snapshot().clone();
+    let diff = compute_diff(
+        &client_manifest,
+        &server_manifest,
+        &ledger,
+        &conflicted_manifest,
+    );
+    storage.apply_diff_to_ledger(&diff, &client_manifest)?;
     Ok(Json(diff))
 }
 
@@ -63,8 +71,40 @@ pub async fn put_file(
         }
     }
 
-    let storage = storage.lock().await;
+    let mut storage = storage.lock().await;
     storage.write_file(&path, &body)?;
+    storage.record_upload(&path, &actual_sha256)?;
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({"sha256": actual_sha256})),
+    ))
+}
+
+pub async fn put_conflicted(
+    State(storage): State<AppState>,
+    Path(path): Path<String>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    let expected_sha256 = headers
+        .get("X-SHA256")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let actual_sha256 = sha256_bytes(&body);
+
+    if let Some(expected) = &expected_sha256 {
+        if *expected != actual_sha256 {
+            return Err(AppError::ChecksumMismatch {
+                expected: expected.clone(),
+                actual: actual_sha256,
+            });
+        }
+    }
+
+    let storage = storage.lock().await;
+    storage.write_conflicted(&path, &body)?;
 
     Ok((
         StatusCode::OK,

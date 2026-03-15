@@ -84,7 +84,7 @@ testserver-start:
     mkdir -p logs
     cargo build -p scriptorum-server
     sudo sysctl -q net.ipv4.ip_unprivileged_port_start=443
-    ./target/debug/scriptorum-server --storage ./testserver-files > logs/server.log 2>&1 & echo $! > logs/server.pid
+    ./target/debug/scriptorum-server --storage ./testserver-files --conflicted-dir ./testserver-conflicted > logs/server.log 2>&1 & echo $! > logs/server.pid
     caddy run --config Caddyfile.testserver > logs/caddy.log 2>&1 & echo $! > logs/caddy.pid
     @echo "Server PID: $(cat logs/server.pid), Caddy PID: $(cat logs/caddy.pid)"
     @echo "Logs: logs/server.log, logs/caddy.log"

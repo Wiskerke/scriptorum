@@ -17,12 +17,40 @@ pub struct Manifest {
     pub files: Vec<FileEntry>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RenameEntry {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConflictEntry {
+    pub original_path: String,
+    pub conflicted_path: String,
+    pub already_present: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SyncDiff {
     /// Files the client should upload to the server
     pub to_upload: Vec<FileEntry>,
     /// Files the client should download from the server
     pub to_download: Vec<FileEntry>,
+    /// Paths the client should delete locally
+    #[serde(default)]
+    pub to_delete: Vec<String>,
+    /// Renames the client should apply locally
+    #[serde(default)]
+    pub to_rename: Vec<RenameEntry>,
+    /// Paths the server should delete (stale renames of files the client has since deleted)
+    #[serde(default)]
+    pub to_delete_on_server: Vec<String>,
+    /// Server will move its version of these to the conflicted folder (during PUT)
+    #[serde(default)]
+    pub server_conflicts: Vec<ConflictEntry>,
+    /// Client should upload its version of these to /api/v1/conflicted/{conflicted_path}
+    #[serde(default)]
+    pub client_conflicts: Vec<ConflictEntry>,
 }
 
 #[cfg(test)]

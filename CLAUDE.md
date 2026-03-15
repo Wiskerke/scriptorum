@@ -67,14 +67,16 @@ just testserver-start                            # run server + Caddy mTLS proxy
 ## Sync Protocol
 
 ```
-POST /api/v1/sync/diff         — client sends Manifest, server returns SyncDiff
-PUT  /api/v1/files/{path}      — upload file (X-SHA256 header)
-GET  /api/v1/files/{path}      — download file
-PUT  /api/v1/conflicted/{path} — upload a displaced file to the conflicted folder (no ledger update)
-GET  /api/v1/health            — health check
+POST /api/v2/sync/diff      — client sends Manifest, server returns SyncDiff
+PUT  /api/v2/files/{path}   — upload file (X-SHA256 header)
+GET  /api/v2/files/{path}   — download file
+PUT  /api/v2/archive/{path} — upload a file to the server archive (no ledger update)
+GET  /api/v2/health         — health check
 ```
 
-Conflict resolution: last-write-wins by mtime, but both versions are preserved. The losing version is moved to the server's conflicted folder (`--conflicted-dir`, default `./conflicted`). `SyncDiff` includes `server_conflicts` (server moves its version during `apply_diff_to_ledger`) and `client_conflicts` (client uploads its version to `PUT /api/v1/conflicted/{path}`).
+Conflict resolution: last-write-wins by mtime, but both versions are preserved. The losing version is moved to the server's `archive/conflicts/` folder (`--archive-dir`, default `./archive`). `SyncDiff` includes `server_archive` (server moves its version during `apply_diff_to_ledger`) and `client_archive` (client uploads its version to `PUT /api/v2/archive/{path}`). Client-deleted synced files go to the archive root via `to_archive_on_server`.
+
+Files placed in `Note/archive/` on the Supernote act as an upload-only outbox: they are uploaded to the server archive and then deleted locally before the regular diff is computed.
 
 ## Conventions
 

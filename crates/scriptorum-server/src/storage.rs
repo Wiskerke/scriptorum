@@ -11,16 +11,16 @@ const LEDGER_FILENAME: &str = ".ledger.json";
 /// Manages file storage on disk and manifest tracking.
 pub struct Storage {
     root: PathBuf,
-    conflicted_dir: PathBuf,
+    archive_dir: PathBuf,
     ledger: HashMap<String, String>,
 }
 
 impl Storage {
-    pub fn new(root: PathBuf, conflicted_dir: PathBuf) -> Result<Self> {
+    pub fn new(root: PathBuf, archive_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&root)
             .with_context(|| format!("creating storage dir {}", root.display()))?;
-        fs::create_dir_all(&conflicted_dir)
-            .with_context(|| format!("creating conflicted dir {}", conflicted_dir.display()))?;
+        fs::create_dir_all(&archive_dir)
+            .with_context(|| format!("creating archive dir {}", archive_dir.display()))?;
 
         let ledger_path = root.join(LEDGER_FILENAME);
         let ledger = if ledger_path.exists() {
@@ -34,7 +34,7 @@ impl Storage {
 
         Ok(Self {
             root,
-            conflicted_dir,
+            archive_dir,
             ledger,
         })
     }
@@ -65,14 +65,14 @@ impl Storage {
         sha256_file(&full)
     }
 
-    /// Build a manifest by scanning the conflicted directory.
-    pub fn conflicted_manifest(&self) -> Result<Manifest> {
-        scan_directory(&self.conflicted_dir)
+    /// Build a manifest by scanning the archive directory.
+    pub fn archive_manifest(&self) -> Result<Manifest> {
+        scan_directory(&self.archive_dir)
     }
 
-    /// Write a file to the conflicted directory. Returns the SHA256 of what was written.
-    pub fn write_conflicted(&self, rel_path: &str, data: &[u8]) -> Result<String> {
-        let full = self.resolve_conflicted(rel_path)?;
+    /// Write a file to the archive directory. Returns the SHA256 of what was written.
+    pub fn write_archive(&self, rel_path: &str, data: &[u8]) -> Result<String> {
+        let full = self.resolve_archive(rel_path)?;
         if let Some(parent) = full.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("creating dir {}", parent.display()))?;
@@ -81,16 +81,16 @@ impl Storage {
         sha256_file(&full)
     }
 
-    /// Move a file from the notes root to the conflicted directory.
-    pub fn move_to_conflicted(&self, notes_rel: &str, conflict_rel: &str) -> Result<()> {
+    /// Move a file from the notes root to the archive directory.
+    pub fn move_to_archive(&self, notes_rel: &str, archive_rel: &str) -> Result<()> {
         let src = self.resolve(notes_rel)?;
-        let dst = self.conflicted_dir.join(conflict_rel);
+        let dst = self.archive_dir.join(archive_rel);
         if let Some(parent) = dst.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("creating dir {}", parent.display()))?;
         }
         fs::rename(&src, &dst)
-            .with_context(|| format!("moving {} to conflicted {}", notes_rel, conflict_rel))
+            .with_context(|| format!("moving {} to archive {}", notes_rel, archive_rel))
     }
 
     /// Record a successful client upload in the ledger and persist it.
@@ -113,22 +113,41 @@ impl Storage {
     ///
     /// Note: `to_delete` entries are NOT removed from the ledger so deletion is idempotent.
     pub fn apply_diff_to_ledger(&mut self, diff: &SyncDiff, client: &Manifest) -> Result<()> {
-        // Move server files displaced by conflicts to the conflicted folder.
-        for entry in &diff.server_conflicts {
+        // Move server files displaced by conflicts to the archive/conflicts/ folder.
+        for entry in &diff.server.conflicts {
             if !entry.already_present {
-                self.move_to_conflicted(&entry.original_path, &entry.conflicted_path)?;
+                self.move_to_archive(&entry.original_path, &entry.archive_path)?;
                 tracing::info!(
                     original = %entry.original_path,
-                    conflicted = %entry.conflicted_path,
-                    "server conflict: moved server version to conflicted folder"
+                    archive = %entry.archive_path,
+                    "server conflict: moved server version to archive/conflicts/"
                 );
             } else {
                 tracing::info!(
                     original = %entry.original_path,
-                    conflicted = %entry.conflicted_path,
-                    "server conflict: version already in conflicted folder, skipping move"
+                    archive = %entry.archive_path,
+                    "server conflict: version already in archive, skipping move"
                 );
             }
+        }
+
+        // Move client-deleted synced files to the archive root.
+        for entry in &diff.server.deleted {
+            if !entry.already_present {
+                self.move_to_archive(&entry.original_path, &entry.archive_path)?;
+                tracing::info!(
+                    original = %entry.original_path,
+                    archive = %entry.archive_path,
+                    "client deleted: moved server copy to archive"
+                );
+            } else {
+                tracing::info!(
+                    original = %entry.original_path,
+                    archive = %entry.archive_path,
+                    "client deleted: version already in archive, skipping move"
+                );
+            }
+            self.ledger.remove(&entry.original_path);
         }
 
         let client_paths: HashMap<&str, &str> = client
@@ -137,7 +156,7 @@ impl Storage {
             .map(|f| (f.path.as_str(), f.sha256.as_str()))
             .collect();
 
-        for path in &diff.to_delete_on_server {
+        for path in &diff.server.to_delete {
             let full_path = self.root.join(path.as_str());
             if full_path.exists() {
                 fs::remove_file(&full_path)
@@ -146,11 +165,11 @@ impl Storage {
             self.ledger.remove(path);
         }
 
-        for entry in &diff.to_download {
+        for entry in &diff.client.to_download {
             self.ledger.insert(entry.path.clone(), entry.sha256.clone());
         }
 
-        for rename in &diff.to_rename {
+        for rename in &diff.client.to_rename {
             let sha = self.ledger.remove(&rename.from).unwrap_or_default();
             // Look up the actual sha from the server manifest if not in ledger
             let sha = if sha.is_empty() {
@@ -190,15 +209,12 @@ impl Storage {
             .with_context(|| format!("writing ledger {}", ledger_path.display()))
     }
 
-    /// Resolve a relative path to an absolute path within the conflicted directory.
+    /// Resolve a relative path to an absolute path within the archive directory.
     /// Rejects paths that escape via `..`.
-    fn resolve_conflicted(&self, rel_path: &str) -> Result<PathBuf> {
-        let full = self.conflicted_dir.join(rel_path);
-        let canonical_root = self.conflicted_dir.canonicalize().with_context(|| {
-            format!(
-                "canonicalizing conflicted dir {}",
-                self.conflicted_dir.display()
-            )
+    fn resolve_archive(&self, rel_path: &str) -> Result<PathBuf> {
+        let full = self.archive_dir.join(rel_path);
+        let canonical_root = self.archive_dir.canonicalize().with_context(|| {
+            format!("canonicalizing archive dir {}", self.archive_dir.display())
         })?;
         let check_path = if full.exists() {
             full.canonicalize()?
@@ -212,7 +228,7 @@ impl Storage {
             check_path.starts_with(&canonical_root),
             "path traversal: {} escapes {}",
             rel_path,
-            self.conflicted_dir.display()
+            self.archive_dir.display()
         );
         Ok(full)
     }
@@ -250,8 +266,8 @@ mod tests {
     use tempfile::TempDir;
 
     fn test_storage(dir: &TempDir) -> Storage {
-        let conflicted = dir.path().join("conflicted");
-        Storage::new(dir.path().to_path_buf(), conflicted).unwrap()
+        let archive = dir.path().join("archive");
+        Storage::new(dir.path().to_path_buf(), archive).unwrap()
     }
 
     #[test]
@@ -316,12 +332,12 @@ mod tests {
     #[test]
     fn ledger_persists_across_reload() {
         let dir = TempDir::new().unwrap();
-        let conflicted = dir.path().join("conflicted");
+        let archive = dir.path().join("archive");
         {
-            let mut storage = Storage::new(dir.path().to_path_buf(), conflicted.clone()).unwrap();
+            let mut storage = Storage::new(dir.path().to_path_buf(), archive.clone()).unwrap();
             storage.record_upload("a.txt", "sha_a").unwrap();
         }
-        let storage = Storage::new(dir.path().to_path_buf(), conflicted).unwrap();
+        let storage = Storage::new(dir.path().to_path_buf(), archive).unwrap();
         assert_eq!(
             storage.ledger_snapshot().get("a.txt").map(|s| s.as_str()),
             Some("sha_a")

@@ -5,26 +5,30 @@ use api::AppState;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post, put};
 use axum::Router;
+use scriptorum_core::protocol::API_VERSION;
 use std::path::Path;
 use std::sync::Arc;
 use storage::Storage;
 use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
 
-/// Build the Axum router with the given storage and conflicted directories.
-pub fn build_app(storage_dir: &Path, conflicted_dir: &Path) -> anyhow::Result<Router> {
-    let storage = Storage::new(storage_dir.to_path_buf(), conflicted_dir.to_path_buf())?;
+/// Build the Axum router with the given storage and archive directories.
+pub fn build_app(storage_dir: &Path, archive_dir: &Path) -> anyhow::Result<Router> {
+    let storage = Storage::new(storage_dir.to_path_buf(), archive_dir.to_path_buf())?;
     let state: AppState = Arc::new(Mutex::new(storage));
 
+    let api = Router::new()
+        .route("/health", get(api::health))
+        .route("/sync/diff", post(api::sync_diff))
+        .route("/files/*path", get(api::get_file).put(api::put_file))
+        .route("/archive/*path", put(api::put_archive))
+        .with_state(state);
+
     Ok(Router::new()
-        .route("/api/v1/health", get(api::health))
-        .route("/api/v1/sync/diff", post(api::sync_diff))
-        .route("/api/v1/files/*path", get(api::get_file).put(api::put_file))
-        .route("/api/v1/conflicted/*path", put(api::put_conflicted))
+        .nest(&format!("/api/{API_VERSION}"), api)
         // Axum's default body limit is 2MB; disable it so large .note files can be uploaded
         .layer(DefaultBodyLimit::disable())
-        .layer(TraceLayer::new_for_http())
-        .with_state(state))
+        .layer(TraceLayer::new_for_http()))
 }
 
 #[cfg(test)]
@@ -32,13 +36,17 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use scriptorum_core::protocol::{Manifest, SyncDiff};
+    use scriptorum_core::protocol::{Manifest, SyncDiff, API_VERSION};
+
+    fn api(path: &str) -> String {
+        format!("/api/{API_VERSION}/{path}")
+    }
     use tempfile::TempDir;
     use tower::ServiceExt;
 
     fn test_app(dir: &std::path::Path) -> Router {
-        let conflicted = dir.join("conflicted");
-        build_app(dir, &conflicted).unwrap()
+        let archive = dir.join("archive");
+        build_app(dir, &archive).unwrap()
     }
 
     #[tokio::test]
@@ -49,7 +57,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri("/api/v1/health")
+                    .uri(api("health"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -74,7 +82,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("PUT")
-                    .uri("/api/v1/files/notes/test.txt")
+                    .uri(api("files/notes/test.txt"))
                     .body(Body::from("hello world"))
                     .unwrap(),
             )
@@ -85,7 +93,7 @@ mod tests {
         let get_resp = app
             .oneshot(
                 Request::builder()
-                    .uri("/api/v1/files/notes/test.txt")
+                    .uri(api("files/notes/test.txt"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -112,7 +120,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("PUT")
-                    .uri("/api/v1/files/check.txt")
+                    .uri(api("files/check.txt"))
                     .header("X-SHA256", &correct_sha)
                     .body(Body::from("test data"))
                     .unwrap(),
@@ -125,7 +133,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("PUT")
-                    .uri("/api/v1/files/check2.txt")
+                    .uri(api("files/check2.txt"))
                     .header("X-SHA256", "wrong_hash")
                     .body(Body::from("test data"))
                     .unwrap(),
@@ -145,7 +153,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/sync/diff")
+                    .uri(api("sync/diff"))
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_string(&manifest).unwrap()))
                     .unwrap(),
@@ -158,8 +166,8 @@ mod tests {
             .await
             .unwrap();
         let diff: SyncDiff = serde_json::from_slice(&body).unwrap();
-        assert!(diff.to_upload.is_empty());
-        assert!(diff.to_download.is_empty());
+        assert!(diff.client.to_upload.is_empty());
+        assert!(diff.client.to_download.is_empty());
     }
 
     #[tokio::test]
@@ -174,7 +182,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/v1/sync/diff")
+                    .uri(api("sync/diff"))
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_string(&manifest).unwrap()))
                     .unwrap(),
@@ -187,9 +195,9 @@ mod tests {
             .await
             .unwrap();
         let diff: SyncDiff = serde_json::from_slice(&body).unwrap();
-        assert!(diff.to_upload.is_empty());
-        assert_eq!(diff.to_download.len(), 1);
-        assert_eq!(diff.to_download[0].path, "existing.txt");
+        assert!(diff.client.to_upload.is_empty());
+        assert_eq!(diff.client.to_download.len(), 1);
+        assert_eq!(diff.client.to_download[0].path, "existing.txt");
     }
 
     #[tokio::test]
@@ -200,7 +208,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri("/api/v1/files/nope.txt")
+                    .uri(api("files/nope.txt"))
                     .body(Body::empty())
                     .unwrap(),
             )

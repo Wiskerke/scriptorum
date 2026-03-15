@@ -56,10 +56,10 @@
               description = "Group to run scriptorum-server as.";
             };
 
-            conflictedDir = mkOption {
-              default = "/var/lib/scriptorum/conflicted";
+            archiveDir = mkOption {
+              default = "/var/lib/scriptorum/notes-archive";
               type = types.str;
-              description = "Directory where files displaced by conflicts are preserved.";
+              description = "Directory where archived and conflicted files are stored.";
             };
           };
 
@@ -73,7 +73,7 @@
 
             systemd.tmpfiles.rules = [
               "d '${cfg.storageDir}' 0750 ${cfg.user} ${cfg.group} - -"
-              "d '${cfg.conflictedDir}' 0750 ${cfg.user} ${cfg.group} - -"
+              "d '${cfg.archiveDir}' 0750 ${cfg.user} ${cfg.group} - -"
             ];
 
             systemd.services.scriptorum = {
@@ -82,7 +82,7 @@
               after = [ "network.target" ];
 
               serviceConfig = {
-                ExecStart = "${self.packages.${pkgs.system}.scriptorum-server}/bin/scriptorum-server --bind ${cfg.bindAddress} --storage ${cfg.storageDir} --conflicted-dir ${cfg.conflictedDir}";
+                ExecStart = "${self.packages.${pkgs.system}.scriptorum-server}/bin/scriptorum-server --bind ${cfg.bindAddress} --storage ${cfg.storageDir} --archive-dir ${cfg.archiveDir}";
                 User = cfg.user;
                 Group = cfg.group;
                 Restart = "on-failure";
@@ -91,7 +91,7 @@
                 NoNewPrivileges = true;
                 ProtectSystem = "strict";
                 ProtectHome = true;
-                ReadWritePaths = [ cfg.storageDir cfg.conflictedDir ];
+                ReadWritePaths = [ cfg.storageDir cfg.archiveDir ];
                 PrivateTmp = true;
               };
             };

@@ -14,9 +14,9 @@ struct Cli {
     #[arg(short, long, default_value = "./storage")]
     storage: PathBuf,
 
-    /// Path to conflicted files directory
-    #[arg(long, default_value = "./conflicted")]
-    conflicted_dir: PathBuf,
+    /// Path to archive directory (for conflict losers and client-deleted files)
+    #[arg(long, default_value = "./archive")]
+    archive_dir: PathBuf,
 }
 
 #[tokio::main]
@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    let app = scriptorum_server::build_app(&cli.storage, &cli.conflicted_dir)?;
+    let app = scriptorum_server::build_app(&cli.storage, &cli.archive_dir)?;
 
     let listener = tokio::net::TcpListener::bind(cli.bind).await?;
     tracing::info!("listening on {}", cli.bind);

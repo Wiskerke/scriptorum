@@ -1,5 +1,5 @@
 use crate::checksum::sha256_bytes;
-use crate::protocol::SyncDiff;
+use crate::protocol::{SyncDiff, API_VERSION};
 use crate::scanner::scan_directory;
 use anyhow::{Context, Result};
 use std::io::Read;
@@ -54,16 +54,17 @@ pub struct SyncResult {
     pub downloaded: usize,
     pub deleted: usize,
     pub renamed: usize,
-    pub conflicts: usize,
+    pub archived: usize,
     pub messages: Vec<String>,
 }
 
 /// Perform a full sync of `note_dir` against the server at `server_url`.
 ///
 /// 1. Scans the local directory to build a manifest
-/// 2. POSTs the manifest to get a SyncDiff
-/// 3. Uploads files the server needs
-/// 4. Downloads files the client needs
+/// 2. Processes any files in `Note/archive/` outbox (uploads to server archive, deletes locally)
+/// 3. POSTs the manifest (excluding `archive/` entries) to get a SyncDiff
+/// 4. Uploads files the server needs
+/// 5. Downloads files the client needs
 ///
 /// The optional `on_progress` callback receives status messages.
 /// If `tls` is `Some`, the connection uses mTLS with the provided certificates.
@@ -82,9 +83,11 @@ where
         on_progress(msg);
     };
 
+    std::fs::create_dir_all(note_dir.join("archive"))?;
+
     report("Scanning local files...");
-    let local_manifest = scan_directory(note_dir)?;
-    report(&format!("Found {} local files", local_manifest.files.len()));
+    let full_manifest = scan_directory(note_dir)?;
+    report(&format!("Found {} local files", full_manifest.files.len()));
 
     report("Computing sync diff...");
     let mut builder = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(30));
@@ -93,8 +96,62 @@ where
         builder = builder.tls_config(Arc::new(rustls_config));
     }
     let agent = builder.build();
+
+    let api_base = format!("{server_url}/api/{API_VERSION}");
+
+    // Step 0: Process the Note/archive/ outbox.
+    // Files with path prefix "archive/" are uploaded to the server archive and deleted locally.
+    let mut archived = 0;
+    let (outbox_entries, local_manifest) = {
+        let mut outbox = Vec::new();
+        let mut regular = full_manifest;
+        regular.files.retain(|f| {
+            if f.path.starts_with("archive/") {
+                outbox.push(f.clone());
+                false
+            } else {
+                true
+            }
+        });
+        (outbox, regular)
+    };
+
+    for entry in &outbox_entries {
+        let archive_path = entry.path.strip_prefix("archive/").unwrap_or(&entry.path);
+        let file_path = note_dir.join(&entry.path);
+        let data = std::fs::read(&file_path)
+            .with_context(|| format!("reading {} for archive upload", file_path.display()))?;
+        let sha = sha256_bytes(&data);
+        report(&format!("Archive outbox: uploading {archive_path}"));
+        agent
+            .put(&format!("{api_base}/archive/{archive_path}"))
+            .set("X-SHA256", &sha)
+            .set("Content-Type", "application/octet-stream")
+            .send_bytes(&data)
+            .with_context(|| format!("uploading archive outbox entry {archive_path}"))?;
+        // Delete local file and remove empty parent dirs
+        if file_path.exists() {
+            std::fs::remove_file(&file_path)
+                .with_context(|| format!("deleting outbox entry {}", entry.path))?;
+            let mut parent = file_path.parent();
+            while let Some(dir) = parent {
+                if dir == note_dir {
+                    break;
+                }
+                if std::fs::read_dir(dir)
+                    .map(|mut d| d.next().is_none())
+                    .unwrap_or(false)
+                {
+                    let _ = std::fs::remove_dir(dir);
+                }
+                parent = dir.parent();
+            }
+        }
+        archived += 1;
+    }
+
     let diff: SyncDiff = agent
-        .post(&format!("{server_url}/api/v1/sync/diff"))
+        .post(&format!("{api_base}/sync/diff"))
         .set("Content-Type", "application/json")
         .send_string(&serde_json::to_string(&local_manifest)?)
         .context("POST /sync/diff failed")?
@@ -103,51 +160,54 @@ where
 
     report(&format!(
         "To upload: {}, to download: {}, to delete: {}, to rename: {}",
-        diff.to_upload.len(),
-        diff.to_download.len(),
-        diff.to_delete.len(),
-        diff.to_rename.len(),
+        diff.client.to_upload.len(),
+        diff.client.to_download.len(),
+        diff.client.to_delete.len(),
+        diff.client.to_rename.len(),
     ));
 
-    // Upload client's conflicted files to the server's conflicted folder
-    let mut conflicts = 0;
-    for conflict in &diff.client_conflicts {
-        conflicts += 1;
-        if conflict.already_present {
+    // Upload client's conflict-losing versions to the server's archive folder
+    for entry in &diff.client.conflicts {
+        archived += 1;
+        if entry.already_present {
             report(&format!(
-                "Conflict: {} (client version already saved as {})",
-                conflict.original_path, conflict.conflicted_path
+                "Conflict: {} (client version already archived as {})",
+                entry.original_path, entry.archive_path
             ));
         } else {
             report(&format!(
-                "Conflict: saving {} as {}",
-                conflict.original_path, conflict.conflicted_path
+                "Conflict: archiving {} as {}",
+                entry.original_path, entry.archive_path
             ));
-            let file_path = note_dir.join(&conflict.original_path);
+            let file_path = note_dir.join(&entry.original_path);
             let data = std::fs::read(&file_path)
-                .with_context(|| format!("reading {} for conflict upload", file_path.display()))?;
+                .with_context(|| format!("reading {} for archive upload", file_path.display()))?;
             let sha = sha256_bytes(&data);
             agent
-                .put(&format!(
-                    "{server_url}/api/v1/conflicted/{}",
-                    conflict.conflicted_path
-                ))
+                .put(&format!("{api_base}/archive/{}", entry.archive_path))
                 .set("X-SHA256", &sha)
                 .set("Content-Type", "application/octet-stream")
                 .send_bytes(&data)
-                .with_context(|| format!("uploading conflict {}", conflict.conflicted_path))?;
+                .with_context(|| format!("uploading archive entry {}", entry.archive_path))?;
         }
     }
-    for conflict in &diff.server_conflicts {
-        conflicts += 1;
+    for entry in &diff.server.conflicts {
+        archived += 1;
         report(&format!(
-            "Conflict: server version of {} moved to {}",
-            conflict.original_path, conflict.conflicted_path
+            "Conflict: server version of {} archived as {}",
+            entry.original_path, entry.archive_path
+        ));
+    }
+    for entry in &diff.server.deleted {
+        archived += 1;
+        report(&format!(
+            "Archived on server: {} → {}",
+            entry.original_path, entry.archive_path
         ));
     }
 
     // Apply deletes first
-    for path in &diff.to_delete {
+    for path in &diff.client.to_delete {
         report(&format!("Deleting {path}"));
         let file_path = note_dir.join(path);
         if file_path.exists() {
@@ -170,7 +230,7 @@ where
     }
 
     // Apply renames
-    for rename in &diff.to_rename {
+    for rename in &diff.client.to_rename {
         report(&format!("Renaming {} -> {}", rename.from, rename.to));
         let src = note_dir.join(&rename.from);
         let dst = note_dir.join(&rename.to);
@@ -181,28 +241,28 @@ where
             .with_context(|| format!("renaming {} -> {}", rename.from, rename.to))?;
     }
 
-    for entry in &diff.to_upload {
+    for entry in &diff.client.to_upload {
         report(&format!("Uploading {}", entry.path));
         let file_path = note_dir.join(&entry.path);
         let data = std::fs::read(&file_path)
             .with_context(|| format!("reading {}", file_path.display()))?;
         let sha = sha256_bytes(&data);
         agent
-            .put(&format!("{server_url}/api/v1/files/{}", entry.path))
+            .put(&format!("{api_base}/files/{}", entry.path))
             .set("X-SHA256", &sha)
             .set("Content-Type", "application/octet-stream")
             .send_bytes(&data)
             .with_context(|| format!("uploading {}", entry.path))?;
     }
 
-    for entry in &diff.to_download {
+    for entry in &diff.client.to_download {
         report(&format!("Downloading {}", entry.path));
         let file_path = note_dir.join(&entry.path);
         if let Some(parent) = file_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let resp = agent
-            .get(&format!("{server_url}/api/v1/files/{}", entry.path))
+            .get(&format!("{api_base}/files/{}", entry.path))
             .call()
             .with_context(|| format!("downloading {}", entry.path))?;
         let mut data = Vec::new();
@@ -213,11 +273,11 @@ where
     report("Sync complete!");
 
     Ok(SyncResult {
-        uploaded: diff.to_upload.len(),
-        downloaded: diff.to_download.len(),
-        deleted: diff.to_delete.len(),
-        renamed: diff.to_rename.len(),
-        conflicts,
+        uploaded: diff.client.to_upload.len(),
+        downloaded: diff.client.to_download.len(),
+        deleted: diff.client.to_delete.len(),
+        renamed: diff.client.to_rename.len(),
+        archived,
         messages,
     })
 }
@@ -345,7 +405,7 @@ mod tests {
             downloaded: 1,
             deleted: 0,
             renamed: 0,
-            conflicts: 0,
+            archived: 0,
             messages: vec!["done".to_string()],
         };
         let s = format!("{r:?}");

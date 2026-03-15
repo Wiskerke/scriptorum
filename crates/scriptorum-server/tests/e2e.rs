@@ -3,8 +3,8 @@ use std::fs;
 use tempfile::TempDir;
 
 /// Start the server on a random port and return the URL.
-async fn start_server(storage_dir: &std::path::Path, conflicted_dir: &std::path::Path) -> String {
-    let app = scriptorum_server::build_app(storage_dir, conflicted_dir).unwrap();
+async fn start_server(storage_dir: &std::path::Path, archive_dir: &std::path::Path) -> String {
+    let app = scriptorum_server::build_app(storage_dir, archive_dir).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -17,7 +17,7 @@ async fn start_server(storage_dir: &std::path::Path, conflicted_dir: &std::path:
 async fn upload_files_to_empty_server() {
     let server_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
-    let url = start_server(server_dir.path(), &server_dir.path().join("conflicted")).await;
+    let url = start_server(server_dir.path(), &server_dir.path().join("archive")).await;
 
     // Create files on the client side
     fs::write(client_dir.path().join("note1.txt"), "hello").unwrap();
@@ -54,7 +54,7 @@ async fn upload_files_to_empty_server() {
 async fn download_files_from_server() {
     let server_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
-    let url = start_server(server_dir.path(), &server_dir.path().join("conflicted")).await;
+    let url = start_server(server_dir.path(), &server_dir.path().join("archive")).await;
 
     // Pre-populate server storage
     fs::write(server_dir.path().join("from_server.txt"), "server data").unwrap();
@@ -88,7 +88,7 @@ async fn download_files_from_server() {
 async fn bidirectional_sync() {
     let server_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
-    let url = start_server(server_dir.path(), &server_dir.path().join("conflicted")).await;
+    let url = start_server(server_dir.path(), &server_dir.path().join("archive")).await;
 
     // Server has one file, client has another
     fs::write(server_dir.path().join("server_note.txt"), "from server").unwrap();
@@ -122,7 +122,7 @@ async fn bidirectional_sync() {
 async fn no_changes_on_second_sync() {
     let server_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
-    let url = start_server(server_dir.path(), &server_dir.path().join("conflicted")).await;
+    let url = start_server(server_dir.path(), &server_dir.path().join("archive")).await;
 
     fs::write(client_dir.path().join("note.txt"), "content").unwrap();
 
@@ -156,7 +156,7 @@ async fn no_changes_on_second_sync() {
 async fn sync_after_client_modifies_file() {
     let server_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
-    let url = start_server(server_dir.path(), &server_dir.path().join("conflicted")).await;
+    let url = start_server(server_dir.path(), &server_dir.path().join("archive")).await;
 
     fs::write(client_dir.path().join("note.txt"), "v1").unwrap();
 
@@ -199,7 +199,7 @@ async fn sync_after_client_modifies_file() {
 async fn server_rename_propagates_to_client() {
     let server_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
-    let url = start_server(server_dir.path(), &server_dir.path().join("conflicted")).await;
+    let url = start_server(server_dir.path(), &server_dir.path().join("archive")).await;
 
     // Client uploads note.txt
     fs::write(client_dir.path().join("note.txt"), "my note").unwrap();
@@ -250,7 +250,7 @@ async fn server_rename_propagates_to_client() {
 async fn server_delete_propagates_to_client() {
     let server_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
-    let url = start_server(server_dir.path(), &server_dir.path().join("conflicted")).await;
+    let url = start_server(server_dir.path(), &server_dir.path().join("archive")).await;
 
     // Client uploads note.txt
     fs::write(client_dir.path().join("note.txt"), "to be deleted").unwrap();
@@ -292,7 +292,7 @@ async fn server_delete_propagates_to_client() {
 async fn client_change_wins_over_server_rename() {
     let server_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
-    let url = start_server(server_dir.path(), &server_dir.path().join("conflicted")).await;
+    let url = start_server(server_dir.path(), &server_dir.path().join("archive")).await;
 
     // Client uploads note.txt (v1)
     fs::write(client_dir.path().join("note.txt"), "v1").unwrap();
@@ -339,13 +339,13 @@ async fn client_change_wins_over_server_rename() {
 }
 
 /// Both sides independently change the same file. Client is newer → client wins.
-/// Server's version must be preserved in the conflicted folder.
+/// Server's version must be preserved in the archive/conflicts/ folder.
 #[tokio::test]
 async fn conflict_preserves_server_version() {
     let server_dir = TempDir::new().unwrap();
-    let conflicted_dir = TempDir::new().unwrap();
+    let archive_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
-    let url = start_server(server_dir.path(), conflicted_dir.path()).await;
+    let url = start_server(server_dir.path(), archive_dir.path()).await;
 
     // Step 1: initial sync — both sides have v1
     fs::write(client_dir.path().join("note.txt"), "v1").unwrap();
@@ -367,7 +367,7 @@ async fn conflict_preserves_server_version() {
     std::thread::sleep(std::time::Duration::from_millis(1100));
     fs::write(client_dir.path().join("note.txt"), "v2-client").unwrap();
 
-    // Sync: client wins (newer mtime) → uploads v2; server's v3 goes to conflicted
+    // Sync: client wins (newer mtime) → uploads v2; server's v3 goes to archive/conflicts/
     let result = tokio::task::spawn_blocking({
         let url = url.clone();
         let path = client_dir.path().to_path_buf();
@@ -379,7 +379,7 @@ async fn conflict_preserves_server_version() {
 
     assert_eq!(result.uploaded, 1);
     assert_eq!(result.downloaded, 0);
-    assert_eq!(result.conflicts, 1);
+    assert_eq!(result.archived, 1);
 
     // Server notes dir has v2 (client's version)
     assert_eq!(
@@ -391,20 +391,20 @@ async fn conflict_preserves_server_version() {
         fs::read_to_string(client_dir.path().join("note.txt")).unwrap(),
         "v2-client"
     );
-    // Server conflicted dir has v3 (server's displaced version)
-    let conflicted_note = conflicted_dir.path().join("note.txt");
-    assert!(conflicted_note.exists(), "conflicted note.txt should exist");
-    assert_eq!(fs::read_to_string(&conflicted_note).unwrap(), "v3-server");
+    // Server archive/conflicts/ has v3 (server's displaced version)
+    let archived_note = archive_dir.path().join("conflicts/note.txt");
+    assert!(archived_note.exists(), "archived note.txt should exist");
+    assert_eq!(fs::read_to_string(&archived_note).unwrap(), "v3-server");
 }
 
 /// Both sides independently change the same file. Server is newer → server wins.
-/// Client's version must be uploaded to the server's conflicted folder.
+/// Client's version must be uploaded to the server's archive/conflicts/ folder.
 #[tokio::test]
 async fn conflict_preserves_client_version() {
     let server_dir = TempDir::new().unwrap();
-    let conflicted_dir = TempDir::new().unwrap();
+    let archive_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
-    let url = start_server(server_dir.path(), conflicted_dir.path()).await;
+    let url = start_server(server_dir.path(), archive_dir.path()).await;
 
     // Step 1: initial sync — both sides have v1
     fs::write(client_dir.path().join("note.txt"), "v1").unwrap();
@@ -426,7 +426,7 @@ async fn conflict_preserves_client_version() {
     std::thread::sleep(std::time::Duration::from_millis(1100));
     fs::write(server_dir.path().join("note.txt"), "v3-server").unwrap();
 
-    // Sync: server wins (newer mtime) → client downloads v3; client's v2 uploaded to conflicted
+    // Sync: server wins (newer mtime) → client downloads v3; client's v2 uploaded to archive
     let result = tokio::task::spawn_blocking({
         let url = url.clone();
         let path = client_dir.path().to_path_buf();
@@ -438,7 +438,7 @@ async fn conflict_preserves_client_version() {
 
     assert_eq!(result.uploaded, 0);
     assert_eq!(result.downloaded, 1);
-    assert_eq!(result.conflicts, 1);
+    assert_eq!(result.archived, 1);
 
     // Client now has v3 (server's version)
     assert_eq!(
@@ -450,8 +450,90 @@ async fn conflict_preserves_client_version() {
         fs::read_to_string(server_dir.path().join("note.txt")).unwrap(),
         "v3-server"
     );
-    // Server conflicted dir has v2 (client's displaced version)
-    let conflicted_note = conflicted_dir.path().join("note.txt");
-    assert!(conflicted_note.exists(), "conflicted note.txt should exist");
-    assert_eq!(fs::read_to_string(&conflicted_note).unwrap(), "v2-client");
+    // Server archive/conflicts/ has v2 (client's displaced version)
+    let archived_note = archive_dir.path().join("conflicts/note.txt");
+    assert!(archived_note.exists(), "archived note.txt should exist");
+    assert_eq!(fs::read_to_string(&archived_note).unwrap(), "v2-client");
+}
+
+/// Client deletes a synced file. Server should move it to the archive root.
+#[tokio::test]
+async fn client_delete_archives_on_server() {
+    let server_dir = TempDir::new().unwrap();
+    let archive_dir = TempDir::new().unwrap();
+    let client_dir = TempDir::new().unwrap();
+    let url = start_server(server_dir.path(), archive_dir.path()).await;
+
+    // Step 1: client uploads note.txt
+    fs::write(client_dir.path().join("note.txt"), "content").unwrap();
+    let result = tokio::task::spawn_blocking({
+        let url = url.clone();
+        let path = client_dir.path().to_path_buf();
+        move || perform_sync(&url, &path, None, |_| {})
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(result.uploaded, 1);
+
+    // Step 2: client deletes note.txt
+    fs::remove_file(client_dir.path().join("note.txt")).unwrap();
+
+    // Step 3: sync — server should archive note.txt
+    let result = tokio::task::spawn_blocking({
+        let url = url.clone();
+        let path = client_dir.path().to_path_buf();
+        move || perform_sync(&url, &path, None, |msg| eprintln!("  {msg}"))
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(result.archived, 1);
+
+    // Server's note.txt should be moved to archive root
+    assert!(!server_dir.path().join("note.txt").exists());
+    let archived_note = archive_dir.path().join("note.txt");
+    assert!(archived_note.exists(), "note.txt should be in archive root");
+    assert_eq!(fs::read_to_string(&archived_note).unwrap(), "content");
+}
+
+/// Files placed in Note/archive/ are uploaded to the server archive and deleted locally.
+#[tokio::test]
+async fn note_archive_outbox() {
+    let server_dir = TempDir::new().unwrap();
+    let archive_dir = TempDir::new().unwrap();
+    let client_dir = TempDir::new().unwrap();
+    let url = start_server(server_dir.path(), archive_dir.path()).await;
+
+    // Create a file in the archive outbox on the client
+    fs::create_dir_all(client_dir.path().join("archive")).unwrap();
+    fs::write(client_dir.path().join("archive/note.txt"), "archived note").unwrap();
+
+    // Sync: file should be uploaded to server archive and deleted locally
+    let result = tokio::task::spawn_blocking({
+        let url = url.clone();
+        let path = client_dir.path().to_path_buf();
+        move || perform_sync(&url, &path, None, |msg| eprintln!("  {msg}"))
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(result.archived, 1);
+    assert_eq!(result.uploaded, 0);
+
+    // Local archive/ dir should have the file deleted
+    assert!(!client_dir.path().join("archive/note.txt").exists());
+
+    // Server archive should have the file
+    let server_archived = archive_dir.path().join("note.txt");
+    assert!(
+        server_archived.exists(),
+        "note.txt should be in server archive"
+    );
+    assert_eq!(
+        fs::read_to_string(&server_archived).unwrap(),
+        "archived note"
+    );
 }

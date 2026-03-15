@@ -22,13 +22,13 @@ pub async fn sync_diff(
 ) -> Result<Json<SyncDiff>, AppError> {
     let mut storage = storage.lock().await;
     let server_manifest = storage.manifest()?;
-    let conflicted_manifest = storage.conflicted_manifest()?;
+    let archive_manifest = storage.archive_manifest()?;
     let ledger = storage.ledger_snapshot().clone();
     let diff = compute_diff(
         &client_manifest,
         &server_manifest,
         &ledger,
-        &conflicted_manifest,
+        &archive_manifest,
     );
     storage.apply_diff_to_ledger(&diff, &client_manifest)?;
     Ok(Json(diff))
@@ -81,7 +81,7 @@ pub async fn put_file(
     ))
 }
 
-pub async fn put_conflicted(
+pub async fn put_archive(
     State(storage): State<AppState>,
     Path(path): Path<String>,
     headers: HeaderMap,
@@ -104,7 +104,7 @@ pub async fn put_conflicted(
     }
 
     let storage = storage.lock().await;
-    storage.write_conflicted(&path, &body)?;
+    storage.write_archive(&path, &body)?;
 
     Ok((
         StatusCode::OK,

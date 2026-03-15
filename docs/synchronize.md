@@ -11,18 +11,36 @@ deletes, conflicts, and duplicate content.
 
 Synchronisation happens in two phases:
 
-1. **Diff phase** — the client sends its file manifest to the server
-   (`POST /api/v1/sync/diff`). The server computes a `SyncDiff` that describes
+1. **Diff phase** — the client ensures the `Note/archive/` outbox directory
+   exists (creating it if necessary), processes any files already in it
+   (see below), then sends its file manifest to the server
+   (`POST /api/v2/sync/diff`). The server computes a `SyncDiff` that describes
    exactly what must happen to bring both sides into agreement, and returns it.
 
 2. **Transfer phase** — the client executes the diff in order:
-   1. Upload client's conflicted files to `/api/v1/conflicted/{path}`
-   2. Delete locally (`to_delete`)
-   3. Rename locally (`to_rename`)
-   4. Upload to server (`to_upload`, via `PUT /api/v1/files/{path}`)
-   5. Download from server (`to_download`, via `GET /api/v1/files/{path}`)
+   1. Upload client's conflict-losing versions (`client.conflicts`) to `/api/v2/archive/{archive_path}`
+   2. Delete locally (`client.to_delete`)
+   3. Rename locally (`client.to_rename`)
+   4. Upload to server (`client.to_upload`, via `PUT /api/v2/files/{path}`)
+   5. Download from server (`client.to_download`, via `GET /api/v2/files/{path}`)
 
 All diff logic lives in `compute_diff` in `crates/scriptorum-core/src/sync.rs`.
+
+---
+
+## Note/archive/ Outbox
+
+The `Note/archive/` directory on the Supernote acts as an upload-only outbox.
+The client creates it automatically at the start of every sync if it does not
+exist yet. Before sending the diff manifest to the server, the client:
+
+1. Scans for any files with path prefix `archive/`.
+2. For each such file: reads it, uploads to `PUT /api/v2/archive/{path_without_archive_prefix}`,
+   then deletes the local file and removes any empty parent directories.
+3. Removes all `archive/` entries from the manifest before posting to `/api/v2/sync/diff`.
+
+This allows users to manually move files to the server archive without affecting
+the regular sync state.
 
 ---
 
@@ -46,17 +64,39 @@ server. The server builds its own manifest from disk at the same time.
 
 ### SyncDiff
 
-The diff returned by the server contains:
+The diff returned by the server is a JSON object with two nested objects,
+`client` and `server`. All fields are always present (no optional omission).
 
-| Field               | Who acts on it | What it means |
-|---------------------|----------------|---------------|
-| `to_upload`         | client         | Upload these files to the server |
-| `to_download`       | client         | Download these files from the server |
-| `to_delete`         | client         | Delete these paths locally |
-| `to_rename`         | client         | Apply these `{from → to}` renames locally |
-| `to_delete_on_server` | server (in `apply_diff_to_ledger`) | Delete these stale server paths |
-| `server_conflicts`  | server (in `apply_diff_to_ledger`) | Move the server's version of these files to the conflicted folder |
-| `client_conflicts`  | client         | Upload the client's version of these files to `/api/v1/conflicted/` |
+```
+SyncDiff {
+    client: {
+        to_upload:   [FileEntry, ...]     // client uploads these to the server
+        to_download: [FileEntry, ...]     // client downloads these from the server
+        to_delete:   ["path", ...]        // client deletes these locally
+        to_rename:   [{from, to}, ...]    // client applies these renames locally
+        conflicts:   [ArchiveEntry, ...]  // client uploads its conflict-losing versions
+    }
+    server: {
+        to_delete:  ["path", ...]         // server deletes these stale paths
+        conflicts:  [ArchiveEntry, ...]   // server moves its conflict-losing versions to archive/conflicts/
+        deleted:    [ArchiveEntry, ...]   // server moves client-deleted files to archive root
+    }
+}
+```
+
+`ArchiveEntry` has three fields:
+
+```
+ArchiveEntry {
+    original_path:   "note.txt"               // where the file currently lives
+    archive_path:    "conflicts/note.txt"      // where it should be stored in the archive
+    already_present: false                     // true if that sha is already in the archive
+}
+```
+
+The `server.*` fields are acted on by the server inside `apply_diff_to_ledger`,
+which runs within the same lock as `sync_diff` before any client uploads arrive.
+The `client.*` fields are acted on by the client during the transfer phase.
 
 ### The Ledger
 
@@ -65,10 +105,10 @@ hash at the time the server last received each file from the client. It is the
 key to distinguishing "who changed this file" from "both sides changed this
 file."
 
-- After a successful upload (`PUT /api/v1/files/{path}`), the server records
+- After a successful upload (`PUT /api/v2/files/{path}`), the server records
   `ledger[path] = sha256`.
 - After computing a diff, `apply_diff_to_ledger` updates the ledger to reflect
-  renames, downloads, and server-side deletes.
+  renames, downloads, and server-side deletes and archives.
 
 The ledger is stored on disk as `.ledger.json` inside the storage directory and
 survives server restarts.
@@ -110,19 +150,19 @@ priority order:
 
 #### Conflict protection
 
-When a winner is chosen, the loser's version is preserved in the conflicted
-folder *only if the loser actually changed independently* (i.e. the ledger does
+When a winner is chosen, the loser's version is preserved in `archive/conflicts/`
+*only if the loser actually changed independently* (i.e. the ledger does
 not already match the loser's sha — if it does, the loser is just the shared
 known-good baseline, which is already safe).
 
-- If **client wins** (upload): server's version goes to `server_conflicts`. The
-  server moves it to the conflicted folder during `apply_diff_to_ledger`, before
+- If **client wins** (upload): server's version goes to `server.conflicts`. The
+  server moves it to `archive/conflicts/` during `apply_diff_to_ledger`, before
   any uploads are processed.
-- If **server wins** (download): client's version goes to `client_conflicts`.
-  The client uploads it to `PUT /api/v1/conflicted/{conflicted_path}` first,
+- If **server wins** (download): client's version goes to `client.conflicts`.
+  The client uploads it to `PUT /api/v2/archive/{archive_path}` first,
   before downloading the server's version.
 
-No conflict entry is created when the loser's sha matches the ledger, because
+No archive entry is created when the loser's sha matches the ledger, because
 the ledger confirms the loser never changed — it is the pre-change baseline that
 both sides already have.
 
@@ -181,18 +221,26 @@ all, so every client file is treated as new and uploaded.
 
 ### Remaining server files
 
-After processing all client files, any server file not yet matched is handled:
+After processing all client files, any server file not yet matched is handled.
+The key check is whether the file's sha is tracked in the ledger and all ledger
+paths for that sha are absent from the client:
 
-- **Stale rename target**: if the server file's sha was in the ledger under some
-  paths, and *all* of those paths are now absent from the client, the file is a
-  server-side rename of something the client has since deleted. It is cleaned up
-  server-side (`to_delete_on_server`).
+- **Directly tracked and client deleted it** (`path` is one of the ledger paths
+  for this sha): the client explicitly uploaded this file and has since deleted
+  it → **archive on server** (`server.deleted`, file moves to archive root).
+- **Stale rename leftover** (the sha's ledger paths are all absent from client,
+  but the current server path is *not* one of them): the file is a server-side
+  rename of something the client deleted. Clean it up server-side
+  (`server.to_delete`).
 - **Otherwise**: a file the client doesn't have yet → **download**.
 
-### Deduplication of server deletes
+### Deduplication of server deletes and archives
 
-If a path appears in both `to_delete_on_server` and `to_upload`, the upload
-will overwrite it anyway, so the delete is dropped.
+- If a path appears in both `server.to_delete` and `client.to_upload`, the upload
+  will overwrite it anyway, so the delete is dropped.
+- If a path appears in both `server.deleted` and `client.to_upload`, the upload
+  takes precedence and the archive entry is dropped.
+- `server.deleted` paths take precedence over `server.to_delete`.
 
 ---
 
@@ -229,43 +277,51 @@ node has a client modification are marked contaminated.
 
 ---
 
-## Conflicted Folder
+## Archive Directory
 
-When a conflict is detected, the losing version is preserved in a separate
-server-side directory (the *conflicted folder*, configured with `--conflicted-dir`,
-default `./conflicted`).
+The archive directory (configured with `--archive-dir`, default `./archive`)
+stores files that are no longer part of the live sync state but should be
+preserved.
 
-### Path assignment (`conflict_dest_path`)
+- **`archive/conflicts/`** — conflict losers. When both sides changed a file
+  and a winner is picked, the loser's version lands here.
+- **`archive/` (root)** — client-deleted files. When the client deletes a file
+  it previously synced, the server moves its copy here rather than deleting it.
+- **Outbox uploads** — files the client explicitly placed in `Note/archive/`
+  are uploaded here directly (path relative to the archive root).
 
-Assigning a destination path for a conflicted file follows these rules in order:
+### Path assignment (`archive_dest_path`)
 
-1. **Already on disk**: if the conflicted folder already contains a file with
-   the same sha256, no move is needed — the content is already safe. The diff
-   entry is marked `already_present = true` and no action is taken.
+Assigning a destination path for an archived file follows these rules in order:
 
-2. **Already assigned this sync**: if the same sha was assigned a conflicted
-   path earlier in the same diff computation (e.g. two files with identical
-   content both lose), reuse the same destination. The content only needs to
-   be stored once.
+1. **Already on disk** (anywhere in the archive): if the archive already contains
+   a file with the same sha256 (regardless of subdirectory), no move is needed —
+   the content is already safe. The diff entry is marked `already_present = true`.
 
-3. **Original path is free**: if the original path (e.g. `note.txt`) is not
-   already taken in the conflicted folder, use it as-is. This is the common
-   case.
+2. **Already assigned this sync**: if the same sha was assigned an archive path
+   earlier in the same diff computation, reuse the same destination. The content
+   only needs to be stored once.
 
-4. **Path collision**: if the original path is already occupied, generate
-   `{stem}_{unix_timestamp}{ext}` (e.g. `note_1740000000.note`), preserving
-   the directory structure.
+3. **Candidate path is free**: use the candidate path (`{subdir}/{original}` for
+   conflicts, `{original}` for archive root). If it is not already taken, use it.
+
+4. **Path collision**: generate `{stem}_{unix_timestamp}{ext}` (e.g.
+   `note_1740000000.note`), preserving the subdirectory and directory structure.
 
 ### Who moves what
 
-- **`server_conflicts`** are handled by the server during `apply_diff_to_ledger`
+- **`server.conflicts`** entries are handled by the server during `apply_diff_to_ledger`
   (called within the same lock as `sync_diff`, before any `PUT` requests arrive).
-  The server calls `fs::rename` to move the file atomically.
+  The server calls `fs::rename` to move the file atomically into `archive/conflicts/`.
 
-- **`client_conflicts`** are handled by the client at the start of the transfer
-  phase, before applying any deletes, renames, or downloads. The client reads
-  the local file and `PUT`s it to `/api/v1/conflicted/{conflicted_path}`. The
-  conflicted endpoint writes the data but does **not** update the ledger.
+- **`client.conflicts`** entries are handled by the client at the start of the
+  transfer phase, before applying any deletes, renames, or downloads. The client
+  reads the local file and `PUT`s it to `/api/v2/archive/{archive_path}`. The
+  archive endpoint writes the data but does **not** update the ledger.
+
+- **`server.deleted`** entries are handled by the server during
+  `apply_diff_to_ledger`. The server moves the file to the archive root and
+  removes the ledger entry for that path.
 
 ---
 
@@ -288,22 +344,22 @@ Diff computation:
   Case B. ledger=v1 ≠ client=v2 ≠ server=v3 → both changed → mtime wins.
   client mtime (300) > server mtime (200) → client wins → upload.
 
-  server_conflicts: [{original_path: "note.txt", conflicted_path: "note.txt", already_present: false}]
-  to_upload: [note.txt sha=v2]
+  server.conflicts: [{original_path: "note.txt", archive_path: "conflicts/note.txt", already_present: false}]
+  client.to_upload: [note.txt sha=v2]
 
 apply_diff_to_ledger (on server, within sync_diff handler):
-  → moves notes/note.txt (sha=v3) to conflicted/note.txt
+  → moves notes/note.txt (sha=v3) to archive/conflicts/note.txt
 
 Transfer phase (client):
-  server_conflicts reported to user (informational only, server already handled it)
-  PUT /api/v1/files/note.txt with sha=v2
+  server.conflicts reported to user (informational only, server already handled it)
+  PUT /api/v2/files/note.txt with sha=v2
   → server writes v2 to notes/note.txt, ledger[note.txt] = v2
 
 Final state:
-  notes/:     note.txt sha=v2   (client's version wins)
-  conflicted/: note.txt sha=v3  (server's displaced version preserved)
-  ledger:     note.txt → v2
-  client:     note.txt sha=v2
+  notes/:              note.txt sha=v2   (client's version wins)
+  archive/conflicts/:  note.txt sha=v3   (server's displaced version preserved)
+  ledger:              note.txt → v2
+  client:              note.txt sha=v2
 ```
 
 ---
@@ -316,9 +372,9 @@ Final state:
 | File only on server | Download |
 | Same file, same content | Nothing |
 | Same file, client newer (mtime) | Upload |
-| Same file, server newer (mtime) | Download; client version saved in conflicted |
+| Same file, server newer (mtime) | Download; client version saved in `archive/conflicts/` |
 | Same file, client changed, server unchanged (ledger) | Upload |
-| Same file, server changed, client unchanged (ledger) | Download; no conflict entry (loser = baseline) |
+| Same file, server changed, client unchanged (ledger) | Download; no archive entry (loser = baseline) |
 | Same file, both changed, same mtime | Upload (client wins ties) |
 | Server renamed file, client unchanged | Client renames locally |
 | Server renamed file, client also renamed | Client's rename wins; upload to client path, delete server path |
@@ -327,5 +383,8 @@ Final state:
 | Server deleted file, client modified since | Client uploads |
 | No ledger, file missing on server | Upload (bootstrap case) |
 | Server shuffled content between files, client modified any of them | All in the swap group: client wins |
-| Conflict, losing version already in conflicted folder | `already_present = true`; no duplicate stored |
-| Multiple files with same sha both lose in one sync | Single conflicted entry; content stored once |
+| Client deleted a previously-synced file | Server moves its copy to archive root |
+| Server rename leftover of client-deleted file | Stale copy deleted from server |
+| Conflict, losing version already in archive | `already_present = true`; no duplicate stored |
+| Multiple files with same sha both lose in one sync | Single archive entry; content stored once |
+| File in `Note/archive/` outbox | Uploaded to server archive, deleted locally |

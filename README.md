@@ -30,7 +30,9 @@ The synchronize has special behavior to handle:
  - Note is renamed on client or on server -> Use the new name
  - Note is deleted on server -> Delete on Supernote, unless the file has changed on the Supernote since the last sync
  - Note is deleted on client -> Will download from server
- - If there is a conflict where a file is changed on both sides, then the losing file will be moved to a 'conflicted' folder on the server, to ensure it can be recovered if needed.
+ - If there is a conflict where a file is changed on both sides, then the losing file will be moved to the server's `archive/conflicts/` folder, to ensure it can be recovered if needed.
+ - If a file is deleted on the client, the server moves its copy to the archive root rather than deleting it.
+ - Files placed in `Note/archive/` on the Supernote are uploaded to the server archive and removed locally (upload-only outbox). The folder will be created on a synchronize if it dit not exist.
 
 More details can be found in [synchronize.md](./docs/synchronize.md).
 
@@ -66,7 +68,7 @@ In your NixOS configuration:
   services.scriptorum = {
     enable = true;
     storageDir = "/var/lib/scriptorum/notes";
-    conflictedDir = "/var/lib/scriptorum/conflicted-notes";
+    archiveDir = "/var/lib/scriptorum/notes-archive";
     bindAddress = "127.0.0.1:3742";
     # openFirewall = false;  # keep false if Caddy is in front
   };
@@ -168,7 +170,7 @@ just emulator-install    # build + install APK, push certs, seed notes
 just testserver-start    # run server + Caddy mTLS proxy
 ```
 
-Logs can be found in the `logs` folder. The server will use `./testserver-files` for notes and `./testserver-conflicted` for conflict-displaced files.
+Logs can be found in the `logs` folder. The server will use `./testserver-files` for notes and `./testserver-archive` for archived files.
 
 When finished:
 ```bash

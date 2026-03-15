@@ -82,7 +82,7 @@ pub extern "system" fn Java_com_scriptorum_app_NativeBridge_performSync(
             let summary = serde_json::json!({
                 "uploaded": sync_result.uploaded,
                 "downloaded": sync_result.downloaded,
-                "conflicts": sync_result.conflicts,
+                "archived": sync_result.archived,
             });
             Ok(summary.to_string())
         })()

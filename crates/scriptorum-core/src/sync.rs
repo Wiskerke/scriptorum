@@ -1,20 +1,26 @@
-use crate::protocol::{ConflictEntry, FileEntry, Manifest, RenameEntry, SyncDiff};
+use crate::protocol::{
+    ArchiveEntry, ClientDiff, FileEntry, Manifest, RenameEntry, ServerDiff, SyncDiff,
+};
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Determine the destination path for a file being moved to the conflicted folder.
+/// Determine the destination path for a file being moved to the archive directory.
 ///
-/// `assignments` maps `sha256 → conflicted_path` for paths already assigned in the current sync.
-/// Returns `(path, already_present)` where `already_present` is true if the file is already on
-/// disk in the conflicted folder.
-pub fn conflict_dest_path(
+/// `subdir` is the subdirectory within the archive (e.g. `"conflicts"` for conflict losers,
+/// or `""` for files moved directly to the archive root).
+///
+/// `assignments` maps `sha256 → archive_path` for paths already assigned in the current sync.
+/// Returns `(path, already_present)` where `already_present` is true if the file is already
+/// anywhere in the archive directory (any subdirectory).
+pub fn archive_dest_path(
     original: &str,
     sha: &str,
-    conflicted: &Manifest,
+    subdir: &str,
+    archive: &Manifest,
     assignments: &mut HashMap<String, String>,
 ) -> (String, bool) {
-    // Already on disk in conflicted folder
-    for file in &conflicted.files {
+    // Already on disk in archive folder (search entire archive regardless of path prefix)
+    for file in &archive.files {
         if file.sha256 == sha {
             return (file.path.clone(), true);
         }
@@ -23,12 +29,18 @@ pub fn conflict_dest_path(
     if let Some(existing) = assignments.get(sha) {
         return (existing.clone(), false);
     }
-    // Use original path if free
+    // Candidate path: place under subdir if provided
+    let candidate = if subdir.is_empty() {
+        original.to_string()
+    } else {
+        format!("{subdir}/{original}")
+    };
+    // Use candidate path if free
     let occupied: HashSet<&str> = assignments.values().map(|s| s.as_str()).collect();
-    let on_disk: HashSet<&str> = conflicted.files.iter().map(|f| f.path.as_str()).collect();
-    if !occupied.contains(original) && !on_disk.contains(original) {
-        assignments.insert(sha.to_string(), original.to_string());
-        return (original.to_string(), false);
+    let on_disk: HashSet<&str> = archive.files.iter().map(|f| f.path.as_str()).collect();
+    if !occupied.contains(candidate.as_str()) && !on_disk.contains(candidate.as_str()) {
+        assignments.insert(sha.to_string(), candidate.clone());
+        return (candidate, false);
     }
     // Generate a unique name using the current unix timestamp
     let ts = SystemTime::now()
@@ -42,14 +54,16 @@ pub fn conflict_dest_path(
         .and_then(|e| e.to_str())
         .map(|e| format!(".{e}"))
         .unwrap_or_default();
-    let filename = format!("{stem}_{ts}{ext}");
-    let dest = match p
+    let stamped = format!("{stem}_{ts}{ext}");
+    let dir = p
         .parent()
         .and_then(|par| par.to_str())
-        .filter(|s| !s.is_empty())
-    {
-        Some(parent) => format!("{parent}/{filename}"),
-        None => filename,
+        .filter(|s| !s.is_empty());
+    let dest = match (subdir.is_empty(), dir) {
+        (true, Some(parent)) => format!("{parent}/{stamped}"),
+        (true, None) => stamped,
+        (false, Some(parent)) => format!("{subdir}/{parent}/{stamped}"),
+        (false, None) => format!("{subdir}/{stamped}"),
     };
     assignments.insert(sha.to_string(), dest.clone());
     (dest, false)
@@ -70,12 +84,12 @@ pub fn conflict_dest_path(
 /// - Client file not on server and ledger shows same sha256 was uploaded: server deleted it.
 /// - Client file not on server, no ledger entry: client has new/changed file to upload.
 /// - Server file unaccounted for: download it, unless it is a stale rename of a
-///   ledger-tracked file that the client has since deleted (→ delete from server instead).
+///   ledger-tracked file that the client has since deleted (→ delete or archive server-side).
 pub fn compute_diff(
     client: &Manifest,
     server: &Manifest,
     ledger: &HashMap<String, String>,
-    conflicted: &Manifest,
+    archive: &Manifest,
 ) -> SyncDiff {
     // Build maps for quick lookup
     let client_map: HashMap<&str, &FileEntry> =
@@ -165,9 +179,10 @@ pub fn compute_diff(
     let mut to_delete = Vec::new();
     let mut to_rename = Vec::new();
     let mut to_delete_on_server = Vec::new();
-    let mut server_conflicts: Vec<ConflictEntry> = Vec::new();
-    let mut client_conflicts: Vec<ConflictEntry> = Vec::new();
-    let mut conflict_assignments: HashMap<String, String> = HashMap::new();
+    let mut server_conflicts: Vec<ArchiveEntry> = Vec::new();
+    let mut client_conflicts: Vec<ArchiveEntry> = Vec::new();
+    let mut server_deleted: Vec<ArchiveEntry> = Vec::new();
+    let mut archive_assignments: HashMap<String, String> = HashMap::new();
 
     // Tracks server paths that have been "claimed" by a client file
     let mut matched_server_paths: HashSet<&str> = HashSet::new();
@@ -197,15 +212,16 @@ pub fn compute_diff(
                 if upload {
                     let ledger_sha = ledger.get(path).map(|s| s.as_str());
                     if ledger_sha != Some(server_entry.sha256.as_str()) {
-                        let (cpath, present) = conflict_dest_path(
+                        let (apath, present) = archive_dest_path(
                             path,
                             &server_entry.sha256,
-                            conflicted,
-                            &mut conflict_assignments,
+                            "conflicts",
+                            archive,
+                            &mut archive_assignments,
                         );
-                        server_conflicts.push(ConflictEntry {
+                        server_conflicts.push(ArchiveEntry {
                             original_path: path.to_string(),
-                            conflicted_path: cpath,
+                            archive_path: apath,
                             already_present: present,
                         });
                     }
@@ -213,15 +229,16 @@ pub fn compute_diff(
                 } else {
                     let ledger_sha = ledger.get(path).map(|s| s.as_str());
                     if ledger_sha != Some(client_entry.sha256.as_str()) {
-                        let (cpath, present) = conflict_dest_path(
+                        let (apath, present) = archive_dest_path(
                             path,
                             &client_entry.sha256,
-                            conflicted,
-                            &mut conflict_assignments,
+                            "conflicts",
+                            archive,
+                            &mut archive_assignments,
                         );
-                        client_conflicts.push(ConflictEntry {
+                        client_conflicts.push(ArchiveEntry {
                             original_path: path.to_string(),
-                            conflicted_path: cpath,
+                            archive_path: apath,
                             already_present: present,
                         });
                     }
@@ -238,9 +255,8 @@ pub fn compute_diff(
                     // If the ledger associates this sha with other paths (not the current
                     // client path), the client has renamed the file to its current path.
                     // Client's rename wins; the server's copy at target_path is stale.
-                    let client_renamed = ledger_by_sha
-                        .get(sha)
-                        .is_some_and(|lp| !lp.is_empty() && !lp.contains(path));
+                    let client_renamed =
+                        ledger_by_sha.get(sha).is_some_and(|lp| !lp.contains(path));
 
                     if client_renamed {
                         to_upload.push(client_entry.clone());
@@ -274,24 +290,46 @@ pub fn compute_diff(
     for server_entry in &server.files {
         if !matched_server_paths.contains(server_entry.path.as_str()) {
             // If this sha was previously tracked in the ledger, and *all* of the paths
-            // that carried it are now absent from the client, the server file is a stale
-            // rename of something the client has since deleted → clean it up server-side.
-            let is_stale_rename = ledger_by_sha
-                .get(server_entry.sha256.as_str())
-                .is_some_and(|lp| !lp.is_empty() && lp.iter().all(|p| !client_map.contains_key(p)));
+            // that carried it are now absent from the client, the server file is either:
+            // - A directly-tracked file the client deleted (path is in ledger paths) → archive
+            // - A stale rename of something the client has since deleted → delete from server
+            let sha = server_entry.sha256.as_str();
+            let path = server_entry.path.as_str();
+            let stale_paths = ledger_by_sha
+                .get(sha)
+                .filter(|lp| lp.iter().all(|p| !client_map.contains_key(p)));
 
-            if is_stale_rename {
-                to_delete_on_server.push(server_entry.path.clone());
+            if let Some(lp) = stale_paths {
+                if lp.contains(path) {
+                    // Client deleted this synced file → archive it on server
+                    let (apath, present) =
+                        archive_dest_path(path, sha, "", archive, &mut archive_assignments);
+                    server_deleted.push(ArchiveEntry {
+                        original_path: path.to_string(),
+                        archive_path: apath,
+                        already_present: present,
+                    });
+                } else {
+                    // Stale rename leftover → delete
+                    to_delete_on_server.push(server_entry.path.clone());
+                }
             } else {
                 to_download.push(server_entry.clone());
             }
         }
     }
 
-    // If a server path appears in both to_delete_on_server and to_upload, the upload
-    // will overwrite it anyway — drop the redundant delete.
+    // Upload paths override both to_delete_on_server and server_deleted.
     let upload_paths: HashSet<&str> = to_upload.iter().map(|f| f.path.as_str()).collect();
     to_delete_on_server.retain(|p| !upload_paths.contains(p.as_str()));
+    server_deleted.retain(|e| !upload_paths.contains(e.original_path.as_str()));
+
+    // server_deleted paths take precedence over to_delete_on_server.
+    let server_deleted_paths: HashSet<&str> = server_deleted
+        .iter()
+        .map(|e| e.original_path.as_str())
+        .collect();
+    to_delete_on_server.retain(|p| !server_deleted_paths.contains(p.as_str()));
 
     to_upload.sort_by(|a, b| a.path.cmp(&b.path));
     to_download.sort_by(|a, b| a.path.cmp(&b.path));
@@ -300,13 +338,18 @@ pub fn compute_diff(
     to_delete_on_server.sort();
 
     SyncDiff {
-        to_upload,
-        to_download,
-        to_delete,
-        to_rename,
-        to_delete_on_server,
-        server_conflicts,
-        client_conflicts,
+        client: ClientDiff {
+            to_upload,
+            to_download,
+            to_delete,
+            to_rename,
+            conflicts: client_conflicts,
+        },
+        server: ServerDiff {
+            to_delete: to_delete_on_server,
+            conflicts: server_conflicts,
+            deleted: server_deleted,
+        },
     }
 }
 
@@ -415,15 +458,15 @@ mod tests {
             .iter()
             .map(|f| (f.path.clone(), f.sha256.clone()))
             .collect();
-        for path in &diff.to_delete {
+        for path in &diff.client.to_delete {
             final_client.remove(path);
         }
-        for r in &diff.to_rename {
+        for r in &diff.client.to_rename {
             if let Some(hash) = final_client.remove(&r.from) {
                 final_client.insert(r.to.clone(), hash);
             }
         }
-        for f in &diff.to_download {
+        for f in &diff.client.to_download {
             final_client.insert(f.path.clone(), f.sha256.clone());
         }
 
@@ -432,11 +475,14 @@ mod tests {
             .iter()
             .map(|f| (f.path.clone(), f.sha256.clone()))
             .collect();
-        for f in &diff.to_upload {
+        for f in &diff.client.to_upload {
             final_server.insert(f.path.clone(), f.sha256.clone());
         }
-        for path in &diff.to_delete_on_server {
+        for path in &diff.server.to_delete {
             final_server.remove(path);
+        }
+        for entry in &diff.server.deleted {
+            final_server.remove(&entry.original_path);
         }
 
         let expected_state: HashMap<String, String> = expected
@@ -499,8 +545,8 @@ mod tests {
             files: vec![entry("n", "hash_b", 1000)],
         };
         let diff = compute_diff(&local, &remote, &no_ledger(), &Manifest::default());
-        assert_eq!(diff.to_upload.len(), 1);
-        assert!(diff.to_download.is_empty());
+        assert_eq!(diff.client.to_upload.len(), 1);
+        assert!(diff.client.to_download.is_empty());
     }
 
     #[test]
@@ -644,5 +690,44 @@ mod tests {
              - - e1",
             "c1",
         )
+    }
+
+    #[test]
+    fn client_delete_archives_on_server() {
+        // Client had "a" in ledger, deleted it → server should archive it, not delete
+        // Ledger shows a1 was uploaded; client no longer has it; server still has it
+        let client = Manifest { files: vec![] };
+        let server = Manifest {
+            files: vec![entry("a", "1", 1)],
+        };
+        let mut ledger = HashMap::new();
+        ledger.insert("a".to_string(), "1".to_string());
+
+        let diff = compute_diff(&client, &server, &ledger, &Manifest::default());
+
+        assert!(diff.client.to_download.is_empty());
+        assert!(diff.server.to_delete.is_empty());
+        assert_eq!(diff.server.deleted.len(), 1);
+        assert_eq!(diff.server.deleted[0].original_path, "a");
+        assert_eq!(diff.server.deleted[0].archive_path, "a");
+        assert!(!diff.server.deleted[0].already_present);
+    }
+
+    #[test]
+    fn stale_rename_leftover_still_deleted() {
+        // Server renamed a→b (ledger has a→sha1), client deleted a.
+        // Server's copy at b is a stale rename leftover → delete, not archive.
+        let client = Manifest { files: vec![] };
+        let server = Manifest {
+            files: vec![entry("b", "1", 1)],
+        };
+        let mut ledger = HashMap::new();
+        ledger.insert("a".to_string(), "1".to_string());
+
+        let diff = compute_diff(&client, &server, &ledger, &Manifest::default());
+
+        assert!(diff.client.to_download.is_empty());
+        assert!(diff.server.deleted.is_empty());
+        assert_eq!(diff.server.to_delete, vec!["b".to_string()]);
     }
 }

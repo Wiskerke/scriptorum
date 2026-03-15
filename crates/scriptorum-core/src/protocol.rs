@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub const API_VERSION: &str = "v2";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileEntry {
     /// Relative path from the note root (e.g. "Daily/2026-02-17.note")
@@ -24,33 +26,44 @@ pub struct RenameEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ConflictEntry {
+pub struct ArchiveEntry {
     pub original_path: String,
-    pub conflicted_path: String,
+    pub archive_path: String,
     pub already_present: bool,
 }
 
+/// Actions the client should perform after receiving a SyncDiff.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SyncDiff {
+pub struct ClientDiff {
     /// Files the client should upload to the server
     pub to_upload: Vec<FileEntry>,
     /// Files the client should download from the server
     pub to_download: Vec<FileEntry>,
     /// Paths the client should delete locally
-    #[serde(default)]
     pub to_delete: Vec<String>,
     /// Renames the client should apply locally
-    #[serde(default)]
     pub to_rename: Vec<RenameEntry>,
-    /// Paths the server should delete (stale renames of files the client has since deleted)
-    #[serde(default)]
-    pub to_delete_on_server: Vec<String>,
-    /// Server will move its version of these to the conflicted folder (during PUT)
-    #[serde(default)]
-    pub server_conflicts: Vec<ConflictEntry>,
-    /// Client should upload its version of these to /api/v1/conflicted/{conflicted_path}
-    #[serde(default)]
-    pub client_conflicts: Vec<ConflictEntry>,
+    /// Upload the client's conflict-losing version to PUT /api/{API_VERSION}/archive/{archive_path}
+    pub conflicts: Vec<ArchiveEntry>,
+}
+
+/// Actions the server performs during `apply_diff_to_ledger` (before any client uploads arrive).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServerDiff {
+    /// Stale server paths to delete (rename leftovers of client-deleted files)
+    pub to_delete: Vec<String>,
+    /// Move the server's conflict-losing versions to archive/conflicts/
+    pub conflicts: Vec<ArchiveEntry>,
+    /// Move client-deleted synced files to the archive root
+    pub deleted: Vec<ArchiveEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SyncDiff {
+    /// Actions the client should perform
+    pub client: ClientDiff,
+    /// Actions the server performs internally (applied in apply_diff_to_ledger)
+    pub server: ServerDiff,
 }
 
 #[cfg(test)]

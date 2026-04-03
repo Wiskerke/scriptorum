@@ -89,8 +89,19 @@ impl Storage {
             fs::create_dir_all(parent)
                 .with_context(|| format!("creating dir {}", parent.display()))?;
         }
-        fs::rename(&src, &dst)
-            .with_context(|| format!("moving {} to archive {}", notes_rel, archive_rel))
+        fs::rename(&src, &dst).or_else(|e| {
+            if e.raw_os_error() == Some(18) {
+                // Cross-device move: copy then delete
+                // This can be caused by using it as a nix service, as the archive is mounted
+                // separate from the normal notes.
+                fs::copy(&src, &dst)
+                    .with_context(|| format!("copying {} to archive {}", notes_rel, archive_rel))?;
+                fs::remove_file(&src)
+                    .with_context(|| format!("removing {} after cross-device copy", notes_rel))
+            } else {
+                Err(e).with_context(|| format!("moving {} to archive {}", notes_rel, archive_rel))
+            }
+        })
     }
 
     /// Record a successful client upload in the ledger and persist it.
